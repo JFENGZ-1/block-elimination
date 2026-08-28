@@ -62,10 +62,10 @@ npm run test:engine
 
 ### 宝塔一键升级
 
-服务器首次将私有 GitHub 仓库克隆到 `/www/server/block-elimination`，并配置好 GitHub Deploy Key 或访问令牌。之后每次升级只需执行：
+仓库为公开仓库，服务器无需配置 GitHub 密钥。首次部署和以后升级均可执行同一条命令：
 
 ```bash
-cd /www/server/block-elimination && git pull --ff-only origin main && bash scripts/upgrade-baota.sh
+bash -lc 'set -e; ROSS_REPO=/www/server/block-elimination; [ -d "$ROSS_REPO/.git" ] || git clone https://github.com/JFENGZ-1/block-elimination.git "$ROSS_REPO"; git -C "$ROSS_REPO" pull --ff-only origin main; bash "$ROSS_REPO/scripts/upgrade-baota.sh" /www/wwwroot/demo.zjzoo.me'
 ```
 
 脚本会将已经关闭调试模式的 `deploy/wwwroot` 覆盖到 `/www/wwwroot/demo.zjzoo.me`，并保留服务器现有的 `api/config.php` 数据库配置。若站点目录不同，可将目录作为参数传入脚本。
