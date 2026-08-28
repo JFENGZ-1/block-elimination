@@ -115,6 +115,7 @@ function rememberTouchStart(event: TouchEvent) {
 }
 
 function preventHorizontalGesture(event: TouchEvent) {
+  if (event.target instanceof Element && event.target.closest('.candidate-slot, .drag-piece')) return
   if (event.touches.length > 1) {
     event.preventDefault()
     return
@@ -341,7 +342,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="site-footer">
-      <span>ROSS BLOCKS / PRODUCTION BUILD 0.2.1</span>
+      <span>ROSS BLOCKS / PRODUCTION BUILD 0.2.2</span>
       <span>先看空间，再放方块。</span>
     </footer>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   BLOCK_COLORS,
   BOARD_SIZE,
@@ -12,12 +12,11 @@ import { gameAudio } from '@/services/gameAudio'
 
 const props = defineProps<{ snapshot: GameSnapshot; game: RossGame }>()
 const boardRef = ref<HTMLElement | null>(null)
+const dragPieceRef = ref<HTMLElement | null>(null)
 const selectedIndex = ref<number | null>(null)
 const hoverCell = ref<{ row: number; column: number; valid: boolean } | null>(null)
 const drag = ref<{
   index: number
-  x: number
-  y: number
   startX: number
   startY: number
   unit: number
@@ -60,6 +59,7 @@ function cellStyle(x: number, y: number, piece: BlockPiece) {
 
 function beginDrag(index: number, event: PointerEvent) {
   if (props.snapshot.status !== 'running' || !props.snapshot.candidates[index]) return
+  if (event.currentTarget instanceof HTMLElement) event.currentTarget.setPointerCapture?.(event.pointerId)
   const cells = boardRef.value?.querySelectorAll<HTMLElement>('.board-cell')
   const firstCell = cells?.[0]?.getBoundingClientRect()
   const secondCell = cells?.[1]?.getBoundingClientRect()
@@ -70,8 +70,6 @@ function beginDrag(index: number, event: PointerEvent) {
   selectedIndex.value = index
   drag.value = {
     index,
-    x: event.clientX,
-    y: event.clientY,
     startX: event.clientX,
     startY: event.clientY,
     unit: Math.min(stepX, stepY),
@@ -80,8 +78,11 @@ function beginDrag(index: number, event: PointerEvent) {
     originLeft: firstCell?.left || boardRef.value?.getBoundingClientRect().left || 0,
     originTop: firstCell?.top || boardRef.value?.getBoundingClientRect().top || 0,
   }
+  pendingPointerX = event.clientX
+  pendingPointerY = event.clientY
   didDrag = false
   updateHover(event.clientX, event.clientY)
+  void nextTick(() => positionDragPiece(event.clientX, event.clientY))
 }
 
 function updateHover(clientX: number, clientY: number) {
@@ -93,14 +94,27 @@ function updateHover(clientX: number, clientY: number) {
   const column = Math.round((floatingLeft - drag.value.originLeft) / drag.value.stepX)
   const row = Math.round((floatingTop - drag.value.originTop) / drag.value.stepY)
   const inside = row + piece.height > 0 && row < BOARD_SIZE && column + piece.width > 0 && column < BOARD_SIZE
-  hoverCell.value = inside ? { row, column, valid: props.game.canPlace(piece, row, column) } : null
+  if (!inside) {
+    if (hoverCell.value) hoverCell.value = null
+    return
+  }
+  if (hoverCell.value?.row === row && hoverCell.value.column === column) return
+  hoverCell.value = { row, column, valid: props.game.canPlace(piece, row, column) }
+}
+
+function positionDragPiece(clientX: number, clientY: number) {
+  if (!dragPieceRef.value) return
+  dragPieceRef.value.style.transform = `translate3d(${clientX}px, ${clientY - 82}px, 0) translateX(-50%)`
+  dragPieceRef.value.style.opacity = '1'
 }
 
 function onPointerMove(event: PointerEvent) {
   if (!drag.value) return
   event.preventDefault()
-  pendingPointerX = event.clientX
-  pendingPointerY = event.clientY
+  const coalesced = event.getCoalescedEvents?.()
+  const latest = coalesced?.length ? coalesced[coalesced.length - 1] : event
+  pendingPointerX = latest.clientX
+  pendingPointerY = latest.clientY
   if (!dragFrame) dragFrame = window.requestAnimationFrame(applyPointerMove)
 }
 
@@ -108,7 +122,7 @@ function applyPointerMove() {
   dragFrame = 0
   if (!drag.value) return
   if (Math.abs(pendingPointerX - drag.value.startX) + Math.abs(pendingPointerY - drag.value.startY) > 4) didDrag = true
-  drag.value = { ...drag.value, x: pendingPointerX, y: pendingPointerY }
+  positionDragPiece(pendingPointerX, pendingPointerY)
   updateHover(pendingPointerX, pendingPointerY)
 }
 
@@ -121,6 +135,13 @@ function onPointerUp(event: PointerEvent) {
   if (hoverCell.value?.valid) {
     if (commitPlacement(drag.value.index, hoverCell.value.row, hoverCell.value.column)) selectedIndex.value = null
   }
+  drag.value = null
+  hoverCell.value = null
+}
+
+function onPointerCancel() {
+  if (dragFrame) window.cancelAnimationFrame(dragFrame)
+  dragFrame = 0
   drag.value = null
   hoverCell.value = null
 }
@@ -185,13 +206,13 @@ watch(
 onMounted(() => {
   window.addEventListener('pointermove', onPointerMove, { passive: false })
   window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('pointercancel', onPointerUp)
+  window.addEventListener('pointercancel', onPointerCancel)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('pointercancel', onPointerUp)
+  window.removeEventListener('pointercancel', onPointerCancel)
   window.cancelAnimationFrame(dragFrame)
   window.clearTimeout(clearTimer)
   window.clearTimeout(breakthroughTimer)
@@ -289,12 +310,11 @@ onBeforeUnmount(() => {
 
     <div
       v-if="drag && draggingPiece"
+      ref="dragPieceRef"
       class="drag-piece piece"
       :style="{
         ...pieceStyle(draggingPiece),
         '--unit': `${drag.unit}px`,
-        left: `${drag.x}px`,
-        top: `${drag.y - 82}px`,
       }"
     >
       <i
@@ -333,7 +353,7 @@ onBeforeUnmount(() => {
 .piece-cell { position: absolute; display: block; padding: 1px; }
 .piece-cell::after { content: ''; position: absolute; z-index: 1; inset: 0 1px 2px; border: 1px solid rgba(3,16,25,.82); border-radius: 2px; background: conic-gradient(from 45deg at 50% 50%, color-mix(in srgb, var(--block-color) 78%, black) 0 25%, color-mix(in srgb, var(--block-color) 64%, black) 25% 50%, color-mix(in srgb, var(--block-color) 88%, white) 50% 75%, color-mix(in srgb, var(--block-color) 58%, white) 75% 100%); box-shadow: 0 2px 0 #041922, 0 3px 4px rgba(0,14,23,.4); filter: saturate(1.14) brightness(1.06); }
 .piece-cell::before { content: ''; position: absolute; z-index: 2; left: 15%; top: 18%; width: 70%; height: 64%; border: 1px solid rgba(255,255,255,.14); border-radius: 1px; background: linear-gradient(145deg, color-mix(in srgb, var(--block-color) 90%, white) 0%, var(--block-color) 52%, color-mix(in srgb, var(--block-color) 92%, black) 100%); box-shadow: inset 2px 2px 3px rgba(255,255,255,.18), inset -2px -2px 3px rgba(0,15,25,.16); pointer-events: none; }
-.drag-piece { position: fixed; z-index: 100; pointer-events: none; filter: drop-shadow(0 18px 20px rgba(0,0,0,.35)); transform: translateX(-50%); }
+.drag-piece { position: fixed; z-index: 100; left: 0; top: 0; opacity: 0; pointer-events: none; contain: layout paint style; filter: drop-shadow(0 18px 20px rgba(0,0,0,.35)); transform: translate3d(-9999px,-9999px,0); transform-origin: center; will-change: transform; }
 .effect-layer { position: absolute; z-index: 5; inset: 0; display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr); gap: var(--board-gap); padding: var(--board-padding); pointer-events: none; }
 .clear-flash { border-radius: 12%; background: white; box-shadow: 0 0 15px white, 0 0 30px #8ff9ff; animation: clear-flash .62s cubic-bezier(.18,.75,.25,1) var(--delay) both; }
 .clear-particle { position: absolute; width: 7px; height: 7px; border-radius: 2px; background: var(--particle-color); box-shadow: 0 0 8px var(--particle-color); animation: particle-burst .68s ease-out both; transform: translate(-50%,-50%) rotate(var(--angle)) translateX(var(--distance)); }
