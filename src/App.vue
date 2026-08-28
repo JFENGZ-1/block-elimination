@@ -341,7 +341,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="site-footer">
-      <span>ROSS BLOCKS / PRODUCTION BUILD 0.2</span>
+      <span>ROSS BLOCKS / PRODUCTION BUILD 0.2.1</span>
       <span>先看空间，再放方块。</span>
     </footer>
 
