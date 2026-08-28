@@ -19,8 +19,6 @@ const accountMenuRef = ref<HTMLElement | null>(null)
 const debugModeEnabled = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MODE !== 'false'
 const contentProtectionEnabled = !debugModeEnabled
 let toastTimer = 0
-let touchStartX = 0
-let touchStartY = 0
 
 const currentPlayer = computed(() => account.player)
 const topScore = computed(() => currentPlayer.value?.bestScore || 0)
@@ -107,40 +105,16 @@ function blockContentAction(event: Event) {
   if (contentProtectionEnabled && !isEditableTarget(event.target)) event.preventDefault()
 }
 
-function rememberTouchStart(event: TouchEvent) {
-  const touch = event.touches[0]
-  if (!touch) return
-  touchStartX = touch.clientX
-  touchStartY = touch.clientY
-}
-
-function preventHorizontalGesture(event: TouchEvent) {
-  if (event.target instanceof Element && event.target.closest('.candidate-slot, .drag-piece')) return
-  if (event.touches.length > 1) {
-    event.preventDefault()
-    return
-  }
-  const touch = event.touches[0]
-  if (!touch) return
-  const deltaX = Math.abs(touch.clientX - touchStartX)
-  const deltaY = Math.abs(touch.clientY - touchStartY)
-  if (deltaX > 10 && deltaX > deltaY) event.preventDefault()
-}
-
 function preventGesture(event: Event) {
   event.preventDefault()
 }
 
 onMounted(() => {
-  window.addEventListener('touchstart', rememberTouchStart, { passive: true })
-  window.addEventListener('touchmove', preventHorizontalGesture, { passive: false })
   document.addEventListener('pointerdown', closeAccountMenu)
   document.addEventListener('gesturestart', preventGesture)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('touchstart', rememberTouchStart)
-  window.removeEventListener('touchmove', preventHorizontalGesture)
   document.removeEventListener('pointerdown', closeAccountMenu)
   document.removeEventListener('gesturestart', preventGesture)
 })

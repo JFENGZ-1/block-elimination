@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import {
   BLOCK_COLORS,
   BOARD_SIZE,
@@ -33,10 +33,23 @@ let breakthroughTimer = 0
 let dragFrame = 0
 let pendingPointerX = 0
 let pendingPointerY = 0
+let dragListenersActive = false
 
 const draggingPiece = computed(() => {
   const index = drag.value?.index
   return index === undefined ? null : props.snapshot.candidates[index]
+})
+
+const ghostCells = computed(() => {
+  if (!hoverCell.value || !draggingPiece.value) return []
+  return draggingPiece.value.cells
+    .map(([x, y]) => ({
+      row: hoverCell.value!.row + y,
+      column: hoverCell.value!.column + x,
+      valid: hoverCell.value!.valid,
+      color: draggingPiece.value!.color,
+    }))
+    .filter(({ row, column }) => row >= 0 && row < BOARD_SIZE && column >= 0 && column < BOARD_SIZE)
 })
 
 function blockColor(value: number) {
@@ -55,6 +68,22 @@ function cellStyle(x: number, y: number, piece: BlockPiece) {
     height: `${100 / piece.height}%`,
     '--block-color': blockColor(piece.color),
   }
+}
+
+function addDragListeners() {
+  if (dragListenersActive) return
+  dragListenersActive = true
+  window.addEventListener('pointermove', onPointerMove, { passive: true })
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', onPointerCancel)
+}
+
+function removeDragListeners() {
+  if (!dragListenersActive) return
+  dragListenersActive = false
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', onPointerCancel)
 }
 
 function beginDrag(index: number, event: PointerEvent) {
@@ -81,6 +110,7 @@ function beginDrag(index: number, event: PointerEvent) {
   pendingPointerX = event.clientX
   pendingPointerY = event.clientY
   didDrag = false
+  addDragListeners()
   updateHover(event.clientX, event.clientY)
   void nextTick(() => positionDragPiece(event.clientX, event.clientY))
 }
@@ -110,11 +140,12 @@ function positionDragPiece(clientX: number, clientY: number) {
 
 function onPointerMove(event: PointerEvent) {
   if (!drag.value) return
-  event.preventDefault()
   const coalesced = event.getCoalescedEvents?.()
   const latest = coalesced?.length ? coalesced[coalesced.length - 1] : event
   pendingPointerX = latest.clientX
   pendingPointerY = latest.clientY
+  // 视觉方块直接跟随最新真实触点；棋盘命中计算仍按帧合并，避免 Vue 高频更新。
+  positionDragPiece(pendingPointerX, pendingPointerY)
   if (!dragFrame) dragFrame = window.requestAnimationFrame(applyPointerMove)
 }
 
@@ -122,7 +153,6 @@ function applyPointerMove() {
   dragFrame = 0
   if (!drag.value) return
   if (Math.abs(pendingPointerX - drag.value.startX) + Math.abs(pendingPointerY - drag.value.startY) > 4) didDrag = true
-  positionDragPiece(pendingPointerX, pendingPointerY)
   updateHover(pendingPointerX, pendingPointerY)
 }
 
@@ -137,6 +167,7 @@ function onPointerUp(event: PointerEvent) {
   }
   drag.value = null
   hoverCell.value = null
+  removeDragListeners()
 }
 
 function onPointerCancel() {
@@ -144,6 +175,7 @@ function onPointerCancel() {
   dragFrame = 0
   drag.value = null
   hoverCell.value = null
+  removeDragListeners()
 }
 
 function choosePiece(index: number) {
@@ -177,14 +209,6 @@ function commitPlacement(index: number, row: number, column: number) {
   return true
 }
 
-function isGhostCell(row: number, column: number) {
-  if (!hoverCell.value || !draggingPiece.value) return null
-  const localX = column - hoverCell.value.column
-  const localY = row - hoverCell.value.row
-  const included = draggingPiece.value.cells.some(([x, y]) => x === localX && y === localY)
-  return included ? hoverCell.value.valid : null
-}
-
 const effectCenter = computed(() => {
   const cells = activeClear.value?.cells || []
   if (!cells.length) return { x: 50, y: 50 }
@@ -203,16 +227,8 @@ watch(
   },
 )
 
-onMounted(() => {
-  window.addEventListener('pointermove', onPointerMove, { passive: false })
-  window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('pointercancel', onPointerCancel)
-})
-
 onBeforeUnmount(() => {
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('pointercancel', onPointerCancel)
+  removeDragListeners()
   window.cancelAnimationFrame(dragFrame)
   window.clearTimeout(clearTimer)
   window.clearTimeout(breakthroughTimer)
@@ -220,7 +236,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="playfield-wrap">
+  <div class="playfield-wrap" :class="{ 'is-dragging': drag }">
     <div
       ref="boardRef"
       class="block-board"
@@ -234,13 +250,24 @@ onBeforeUnmount(() => {
         class="board-cell"
         :class="{
           occupied: snapshot.board[Math.floor(index / BOARD_SIZE)][index % BOARD_SIZE],
-          'ghost-valid': isGhostCell(Math.floor(index / BOARD_SIZE), index % BOARD_SIZE) === true,
-          'ghost-invalid': isGhostCell(Math.floor(index / BOARD_SIZE), index % BOARD_SIZE) === false,
         }"
         :style="{ '--block-color': blockColor(snapshot.board[Math.floor(index / BOARD_SIZE)][index % BOARD_SIZE]) }"
         :aria-label="`第 ${Math.floor(index / BOARD_SIZE) + 1} 行，第 ${(index % BOARD_SIZE) + 1} 列`"
         @click="placeByTap(Math.floor(index / BOARD_SIZE), index % BOARD_SIZE)"
       />
+      <div v-if="ghostCells.length" class="ghost-layer" aria-hidden="true">
+        <i
+          v-for="cell in ghostCells"
+          :key="`${cell.row}-${cell.column}`"
+          class="ghost-cell"
+          :class="cell.valid ? 'valid' : 'invalid'"
+          :style="{
+            gridColumn: cell.column + 1,
+            gridRow: cell.row + 1,
+            '--block-color': blockColor(cell.color),
+          }"
+        />
+      </div>
       <div v-if="activeClear" class="effect-layer" aria-hidden="true">
         <i
           v-for="([column, row], index) in activeClear.cells"
@@ -336,10 +363,11 @@ onBeforeUnmount(() => {
 .board-cell::after { content: ''; position: absolute; z-index: 1; left: 15%; top: 18%; width: 70%; height: 64%; border: 1px solid rgba(255,255,255,.14); border-radius: 1px; background: linear-gradient(145deg, color-mix(in srgb, var(--block-color) 90%, white) 0%, var(--block-color) 52%, color-mix(in srgb, var(--block-color) 92%, black) 100%); box-shadow: inset 2px 2px 3px rgba(255,255,255,.18), inset -2px -2px 3px rgba(0,15,25,.16); opacity: 0; pointer-events: none; transform: scale(.76); transition: opacity .15s ease, transform .18s ease; }
 .board-cell.occupied::before { opacity: 1; filter: saturate(1.2) brightness(1.06); transform: scale(1); }
 .board-cell.occupied::after { opacity: 1; transform: scale(1); }
-.board-cell.ghost-valid::before { opacity: .58; transform: scale(1); }
-.board-cell.ghost-valid::after { opacity: .3; transform: translateY(0) scale(1); }
-.board-cell.ghost-valid { background: rgba(94,231,226,.12); }
-.board-cell.ghost-invalid { background: rgba(255,107,122,.28); }
+.ghost-layer { position: absolute; z-index: 2; inset: 0; display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr); gap: var(--board-gap); padding: var(--board-padding); contain: layout paint style; pointer-events: none; }
+.ghost-cell { position: relative; min-width: 0; min-height: 0; border-radius: 2px; }
+.ghost-cell.valid { border: 1px solid rgba(3,16,25,.7); background: conic-gradient(from 45deg at 50% 50%, color-mix(in srgb, var(--block-color) 78%, black) 0 25%, color-mix(in srgb, var(--block-color) 64%, black) 25% 50%, color-mix(in srgb, var(--block-color) 88%, white) 50% 75%, color-mix(in srgb, var(--block-color) 58%, white) 75% 100%); box-shadow: 0 2px 0 rgba(4,25,34,.8), 0 0 9px rgba(94,231,226,.3); opacity: .58; }
+.ghost-cell.valid::after { content: ''; position: absolute; inset: 17% 14% 20%; border: 1px solid rgba(255,255,255,.16); border-radius: 1px; background: linear-gradient(145deg, color-mix(in srgb, var(--block-color) 90%, white), var(--block-color) 52%, color-mix(in srgb, var(--block-color) 92%, black)); opacity: .65; }
+.ghost-cell.invalid { border: 1px solid rgba(255,162,171,.65); background: rgba(255,74,92,.42); box-shadow: inset 0 0 10px rgba(255,72,91,.38); }
 .candidate-rack { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; min-height: 120px; margin-top: 14px; }
 .candidate-slot { position: relative; display: grid; place-items: center; min-width: 0; min-height: 112px; padding: 10px; overflow: hidden; color: var(--muted); border: 1px solid rgba(161,242,255,.28); border-radius: 18px; background: linear-gradient(180deg, rgba(4,83,113,.68), rgba(4,49,77,.58)); box-shadow: inset 0 1px rgba(255,255,255,.12), 0 9px 24px rgba(0,44,70,.2); cursor: grab; touch-action: none; transition: .18s ease; }
 .candidate-slot:hover:not(:disabled), .candidate-slot.selected { border-color: rgba(94,231,226,.35); background: rgba(94,231,226,.06); transform: translateY(-2px); }
@@ -354,6 +382,14 @@ onBeforeUnmount(() => {
 .piece-cell::after { content: ''; position: absolute; z-index: 1; inset: 0 1px 2px; border: 1px solid rgba(3,16,25,.82); border-radius: 2px; background: conic-gradient(from 45deg at 50% 50%, color-mix(in srgb, var(--block-color) 78%, black) 0 25%, color-mix(in srgb, var(--block-color) 64%, black) 25% 50%, color-mix(in srgb, var(--block-color) 88%, white) 50% 75%, color-mix(in srgb, var(--block-color) 58%, white) 75% 100%); box-shadow: 0 2px 0 #041922, 0 3px 4px rgba(0,14,23,.4); filter: saturate(1.14) brightness(1.06); }
 .piece-cell::before { content: ''; position: absolute; z-index: 2; left: 15%; top: 18%; width: 70%; height: 64%; border: 1px solid rgba(255,255,255,.14); border-radius: 1px; background: linear-gradient(145deg, color-mix(in srgb, var(--block-color) 90%, white) 0%, var(--block-color) 52%, color-mix(in srgb, var(--block-color) 92%, black) 100%); box-shadow: inset 2px 2px 3px rgba(255,255,255,.18), inset -2px -2px 3px rgba(0,15,25,.16); pointer-events: none; }
 .drag-piece { position: fixed; z-index: 100; left: 0; top: 0; opacity: 0; pointer-events: none; contain: layout paint style; filter: drop-shadow(0 18px 20px rgba(0,0,0,.35)); transform: translate3d(-9999px,-9999px,0); transform-origin: center; will-change: transform; }
+.playfield-wrap.is-dragging .board-cell,
+.playfield-wrap.is-dragging .board-cell::before,
+.playfield-wrap.is-dragging .board-cell::after,
+.playfield-wrap.is-dragging .candidate-slot { transition: none; }
+.playfield-wrap.is-dragging .block-board.rescue-mode,
+.playfield-wrap.is-dragging .candidate-slot.at-risk,
+.playfield-wrap.is-dragging .candidate-slot.at-risk::before { animation-play-state: paused; }
+.playfield-wrap.is-dragging .block-board.rescue-mode { filter: none; }
 .effect-layer { position: absolute; z-index: 5; inset: 0; display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr); gap: var(--board-gap); padding: var(--board-padding); pointer-events: none; }
 .clear-flash { border-radius: 12%; background: white; box-shadow: 0 0 15px white, 0 0 30px #8ff9ff; animation: clear-flash .62s cubic-bezier(.18,.75,.25,1) var(--delay) both; }
 .clear-particle { position: absolute; width: 7px; height: 7px; border-radius: 2px; background: var(--particle-color); box-shadow: 0 0 8px var(--particle-color); animation: particle-burst .68s ease-out both; transform: translate(-50%,-50%) rotate(var(--angle)) translateX(var(--distance)); }
