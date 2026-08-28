@@ -30,5 +30,5 @@ fi
 chmod 755 "${site_root}" "${site_root}/api"
 
 version="$(tr -d '\r\n' < "${repo_root}/deploy/VERSION")"
-echo "罗斯方块 ${version} 已升级完成：${site_root}"
+echo "坨坨方块 ${version} 已升级完成：${site_root}"
 echo "数据库配置 api/config.php 已保留。"

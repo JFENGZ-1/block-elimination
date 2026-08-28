@@ -160,9 +160,9 @@ onBeforeUnmount(() => {
     <div class="star-field" aria-hidden="true"><i v-for="n in 22" :key="n" /></div>
 
     <header class="topbar">
-      <a class="brand" href="#" aria-label="罗斯方块首页">
+      <a class="brand" href="#" aria-label="坨坨方块首页">
         <span class="brand-blocks" aria-hidden="true"><i /><i /><i /><i /></span>
-        <span><b>罗斯方块</b><small>ROSS BLOCKS</small></span>
+        <span><b>坨坨方块</b><small>TUOTUO BLOCKS</small></span>
       </a>
       <button class="top-rank-button" @click="openRanking">
         <span class="rank-medal">★</span>
@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
                   <small>先消除空间，再放入标记方块</small>
                 </span>
               </span>
-              <span v-else key="mode">ROSS // DRAG MODE</span>
+              <span v-else key="mode">TUOTUO // DRAG MODE</span>
             </Transition>
             <i :class="{ live: snapshot.status === 'running' }" />
           </div>
@@ -308,7 +308,7 @@ onBeforeUnmount(() => {
                 </template>
                 <template v-else>
                   <p>READY WHEN YOU ARE</p>
-                  <h1>罗斯方块</h1>
+                  <h1>坨坨方块</h1>
                   <button class="primary-button" @click="startGame"><span>◆</span> 开始游戏</button>
                   <small>拖、放、填满、消除</small>
                 </template>
@@ -342,7 +342,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="site-footer">
-      <span>ROSS BLOCKS / PRODUCTION BUILD 0.2.2</span>
+      <span>TUOTUO BLOCKS / PRODUCTION BUILD 0.2.3</span>
       <span>先看空间，再放方块。</span>
     </footer>
 

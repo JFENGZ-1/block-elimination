@@ -27,7 +27,7 @@ function post(string $name, string $fallback = ''): string
     return trim((string) ($_POST[$name] ?? $fallback));
 }
 
-function render(string $content, string $title = '罗斯方块 · 服务器配置'): never
+function render(string $content, string $title = '坨坨方块 · 服务器配置'): never
 {
     echo '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8">';
     echo '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">';

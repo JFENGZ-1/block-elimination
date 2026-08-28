@@ -161,7 +161,7 @@ try {
 
     if ($method === 'GET' && $path === '/health') {
         db()->query('SELECT 1');
-        respond(['ok' => true, 'service' => 'ross-blocks-api']);
+        respond(['ok' => true, 'service' => 'tuotuo-blocks-api']);
     }
 
     if ($method === 'POST' && $path === '/register') {
@@ -250,6 +250,6 @@ try {
 
     fail('接口不存在', 404);
 } catch (Throwable $error) {
-    error_log('[ross-blocks-api] ' . $error->getMessage());
+    error_log('[tuotuo-blocks-api] ' . $error->getMessage());
     fail('服务器暂时不可用，请稍后重试', 500);
 }

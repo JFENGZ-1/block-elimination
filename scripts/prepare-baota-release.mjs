@@ -24,7 +24,7 @@ const setupKey = randomBytes(24).toString('hex')
 await writeFile(join(webRoot, 'api', '.setup-key.php'), `<?php\ndeclare(strict_types=1);\nreturn '${setupKey}';\n`)
 await writeFile(
   join(releaseRoot, 'SETUP_KEY.txt'),
-  `罗斯方块一次性安装密钥\n\n${setupKey}\n\n上传 wwwroot 后访问：\nhttps://你的域名/api/setup.php?key=${setupKey}\n`,
+  `坨坨方块一次性安装密钥\n\n${setupKey}\n\n上传 wwwroot 后访问：\nhttps://你的域名/api/setup.php?key=${setupKey}\n`,
 )
 
 console.log(`宝塔发布包已生成：${releaseRoot}`)

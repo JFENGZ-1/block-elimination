@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
       class="block-board"
       :class="{ 'rescue-mode': snapshot.warning }"
       role="grid"
-      aria-label="10 × 10 罗斯方块棋盘"
+      aria-label="10 × 10 坨坨方块棋盘"
     >
       <button
         v-for="(_, index) in BOARD_SIZE * BOARD_SIZE"

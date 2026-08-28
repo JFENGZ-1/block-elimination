@@ -217,7 +217,7 @@ kbd.wide { min-width: 56px; font-size: 7px; }
 .toast-enter-active, .toast-leave-active { transition: .25s ease; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 10px); }
 
-/* 罗斯方块拖动模式 */
+/* 坨坨方块拖动模式 */
 .star-field { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; }
 .star-field i { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #dffcff; box-shadow: 0 0 9px 2px currentColor; animation: star-twinkle 2.4s ease-in-out infinite alternate; }
 .star-field i:nth-child(4n+1) { color: #fff25a; background: currentColor; }
