@@ -19,8 +19,9 @@ class GameAudio {
   }
 
   playPlace() {
-    this.tone(190, 0.055, 'triangle', 0.05, 0)
-    this.tone(285, 0.04, 'sine', 0.025, 0.025)
+    // 清脆起音 + 快速下坠的果冻“扣入”感，在手机扬声器上也能听清。
+    this.sweep(720, 360, 0.045, 'triangle', 0.045, 0)
+    this.sweep(410, 145, 0.095, 'sine', 0.09, 0.008)
   }
 
   playClear(lines: number, combo: number) {
@@ -64,6 +65,33 @@ class GameAudio {
     gain.connect(context.destination)
     oscillator.start(startsAt)
     oscillator.stop(startsAt + duration + 0.02)
+  }
+
+  private sweep(
+    startFrequency: number,
+    endFrequency: number,
+    duration: number,
+    type: OscillatorType,
+    volume: number,
+    delay: number,
+  ) {
+    if (!this.enabledValue) return
+    const context = this.getContext()
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    const startsAt = context.currentTime + delay
+    const endsAt = startsAt + duration
+
+    oscillator.type = type
+    oscillator.frequency.setValueAtTime(startFrequency, startsAt)
+    oscillator.frequency.exponentialRampToValueAtTime(endFrequency, endsAt)
+    gain.gain.setValueAtTime(0.0001, startsAt)
+    gain.gain.exponentialRampToValueAtTime(volume, startsAt + 0.006)
+    gain.gain.exponentialRampToValueAtTime(0.0001, endsAt)
+    oscillator.connect(gain)
+    gain.connect(context.destination)
+    oscillator.start(startsAt)
+    oscillator.stop(endsAt + 0.02)
   }
 }
 
