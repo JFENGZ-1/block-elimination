@@ -48,13 +48,13 @@ interface HistoryState {
 }
 
 export const BLOCK_COLORS = [
-  '#18C9F4',
-  '#FFD21E',
-  '#A56BFF',
-  '#61D12D',
-  '#FF3B30',
-  '#278DFF',
-  '#FF8F1F',
+  '#19E0FF',
+  '#FFE135',
+  '#B765FF',
+  '#66ED32',
+  '#FF4964',
+  '#348CFF',
+  '#FF9E24',
 ]
 
 const SHAPES: Point[][] = [
