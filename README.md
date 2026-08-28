@@ -33,6 +33,12 @@ npm run build
 npm run build:baota
 ```
 
+生成关闭调试模式、可直接提交和升级的生产目录：
+
+```bash
+npm run build:production
+```
+
 游戏引擎测试：
 
 ```bash
@@ -53,6 +59,16 @@ npm run test:engine
 适用于宝塔面板、Nginx、PHP 8.2 和 MySQL 5.7。完整流程参见 [`server/BAOTA_DEPLOY.md`](server/BAOTA_DEPLOY.md)。
 
 数据库密码保存在服务器的 `server/api/config.php` 中，该文件已加入 `.gitignore`，不要提交到仓库。
+
+### 宝塔一键升级
+
+服务器首次将私有 GitHub 仓库克隆到 `/www/server/block-elimination`，并配置好 GitHub Deploy Key 或访问令牌。之后每次升级只需执行：
+
+```bash
+cd /www/server/block-elimination && git pull --ff-only origin main && bash scripts/upgrade-baota.sh
+```
+
+脚本会将已经关闭调试模式的 `deploy/wwwroot` 覆盖到 `/www/wwwroot/demo.zjzoo.me`，并保留服务器现有的 `api/config.php` 数据库配置。若站点目录不同，可将目录作为参数传入脚本。
 
 ## 迁移到微信小游戏
 

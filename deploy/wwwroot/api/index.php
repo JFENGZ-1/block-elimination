@@ -1,0 +1,255 @@
+<?php
+declare(strict_types=1);
+
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: same-origin');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+function respond(array $payload, int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function fail(string $message, int $status = 400): never
+{
+    respond(['error' => $message], $status);
+}
+
+function config(): array
+{
+    static $config;
+    if ($config !== null) return $config;
+    $path = __DIR__ . '/config.php';
+    if (!is_file($path)) throw new RuntimeException('API config.php is missing');
+    $config = require $path;
+    return $config;
+}
+
+function db(): PDO
+{
+    static $pdo;
+    if ($pdo instanceof PDO) return $pdo;
+    $database = config()['database'];
+    $dsn = sprintf(
+        'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+        $database['host'],
+        $database['port'],
+        $database['name'],
+    );
+    $pdo = new PDO($dsn, $database['user'], $database['password'], [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ]);
+    return $pdo;
+}
+
+function body(): array
+{
+    $length = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($length > 16384) fail('请求内容过大', 413);
+    $raw = file_get_contents('php://input');
+    if ($raw === false || $raw === '') return [];
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) fail('请求格式不正确');
+    return $decoded;
+}
+
+function player(array $row, ?int $currentUserId = null): array
+{
+    $id = (int) $row['id'];
+    return [
+        'id' => (string) $id,
+        'username' => $row['username'],
+        'bestScore' => (int) $row['best_score'],
+        'totalLines' => (int) $row['total_lines'],
+        'gamesPlayed' => (int) $row['games_played'],
+        'isCurrent' => $currentUserId !== null && $id === $currentUserId,
+    ];
+}
+
+function bearerToken(): ?string
+{
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if (!preg_match('/^Bearer\s+([a-f0-9]{64})$/i', trim($header), $matches)) return null;
+    return strtolower($matches[1]);
+}
+
+function authenticatedUser(bool $required = true): ?array
+{
+    $token = bearerToken();
+    if ($token === null) {
+        if ($required) fail('请先登录', 401);
+        return null;
+    }
+    $tokenHash = hash('sha256', $token);
+    $statement = db()->prepare(
+        'SELECT u.id, u.username, u.best_score, u.total_lines, u.games_played
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token_hash = ? AND s.expires_at > NOW() LIMIT 1'
+    );
+    $statement->execute([$tokenHash]);
+    $user = $statement->fetch();
+    if (!$user) {
+        if ($required) fail('登录已过期，请重新登录', 401);
+        return null;
+    }
+    $user['_token_hash'] = $tokenHash;
+    return $user;
+}
+
+function newSession(int $userId): array
+{
+    $token = bin2hex(random_bytes(32));
+    $tokenHash = hash('sha256', $token);
+    $ttlDays = max(1, min(90, (int) (config()['session_ttl_days'] ?? 30)));
+    $expiresAt = (new DateTimeImmutable("+{$ttlDays} days"))->format('Y-m-d H:i:s');
+    $statement = db()->prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)');
+    $statement->execute([$tokenHash, $userId, $expiresAt]);
+    return ['token' => $token, 'expiresInDays' => $ttlDays];
+}
+
+function validateCredentials(array $input, bool $registering): array
+{
+    $username = trim((string) ($input['username'] ?? ''));
+    $password = (string) ($input['password'] ?? '');
+    $usernameLength = function_exists('mb_strlen')
+        ? mb_strlen($username, 'UTF-8')
+        : preg_match_all('/./u', $username, $unused);
+    if ($usernameLength < 2 || $usernameLength > 12 || preg_match('/[\x00-\x1F\x7F]/u', $username)) {
+        fail('昵称需要 2–12 个有效字符');
+    }
+    $minimum = $registering ? 8 : 1;
+    if (strlen($password) < $minimum || strlen($password) > 72) {
+        fail($registering ? '密码需要 8–72 位' : '昵称或密码不正确');
+    }
+    return [$username, $password];
+}
+
+function leaderboard(?array $currentUser, int $limit): array
+{
+    $limit = max(1, min(100, $limit));
+    $statement = db()->prepare(
+        'SELECT id, username, best_score, total_lines, games_played
+         FROM users ORDER BY best_score DESC, total_lines DESC, created_at ASC LIMIT ?'
+    );
+    $statement->bindValue(1, $limit, PDO::PARAM_INT);
+    $statement->execute();
+    $currentId = $currentUser ? (int) $currentUser['id'] : null;
+    $players = array_map(fn(array $row) => player($row, $currentId), $statement->fetchAll());
+    $currentRank = null;
+    if ($currentUser) {
+        $rankStatement = db()->prepare('SELECT 1 + COUNT(*) FROM users WHERE best_score > ?');
+        $rankStatement->execute([(int) $currentUser['best_score']]);
+        $currentRank = (int) $rankStatement->fetchColumn();
+    }
+    return ['players' => $players, 'currentRank' => $currentRank];
+}
+
+try {
+    $method = $_SERVER['REQUEST_METHOD'];
+    $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
+    $path = preg_replace('#^/api#', '', $path) ?: '/';
+
+    if ($method === 'GET' && $path === '/health') {
+        db()->query('SELECT 1');
+        respond(['ok' => true, 'service' => 'ross-blocks-api']);
+    }
+
+    if ($method === 'POST' && $path === '/register') {
+        [$username, $password] = validateCredentials(body(), true);
+        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+        try {
+            $statement = db()->prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
+            $statement->execute([$username, $passwordHash]);
+        } catch (PDOException $error) {
+            if ($error->getCode() === '23000') fail('这个昵称已经被注册啦', 409);
+            throw $error;
+        }
+        $userId = (int) db()->lastInsertId();
+        $session = newSession($userId);
+        $user = ['id' => $userId, 'username' => $username, 'best_score' => 0, 'total_lines' => 0, 'games_played' => 0];
+        respond(['session' => ['id' => (string) $userId, 'username' => $username], 'player' => player($user, $userId)] + $session, 201);
+    }
+
+    if ($method === 'POST' && $path === '/login') {
+        [$username, $password] = validateCredentials(body(), false);
+        $statement = db()->prepare(
+            'SELECT id, username, password_hash, best_score, total_lines, games_played FROM users WHERE username = ? LIMIT 1'
+        );
+        $statement->execute([$username]);
+        $user = $statement->fetch();
+        if (!$user || !password_verify($password, $user['password_hash'])) fail('昵称或密码不正确', 401);
+        if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
+            $rehash = db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+            $rehash->execute([password_hash($password, PASSWORD_DEFAULT), $user['id']]);
+        }
+        $session = newSession((int) $user['id']);
+        respond([
+            'session' => ['id' => (string) $user['id'], 'username' => $user['username']],
+            'player' => player($user, (int) $user['id']),
+        ] + $session);
+    }
+
+    if ($method === 'POST' && $path === '/logout') {
+        $user = authenticatedUser();
+        $statement = db()->prepare('DELETE FROM sessions WHERE token_hash = ?');
+        $statement->execute([$user['_token_hash']]);
+        respond(['ok' => true]);
+    }
+
+    if ($method === 'GET' && $path === '/me') {
+        $user = authenticatedUser();
+        respond([
+            'session' => ['id' => (string) $user['id'], 'username' => $user['username']],
+            'player' => player($user, (int) $user['id']),
+        ]);
+    }
+
+    if ($method === 'GET' && $path === '/leaderboard') {
+        $user = authenticatedUser(false);
+        respond(leaderboard($user, (int) ($_GET['limit'] ?? 20)));
+    }
+
+    if ($method === 'POST' && $path === '/scores') {
+        $user = authenticatedUser();
+        $input = body();
+        $score = $input['score'] ?? null;
+        $lines = $input['lines'] ?? null;
+        if (!is_int($score) || !is_int($lines)) fail('成绩格式不正确');
+        $maxScore = (int) (config()['max_score_per_game'] ?? 1000000);
+        $maxLines = (int) (config()['max_lines_per_game'] ?? 10000);
+        if ($score < 0 || $score > $maxScore || $lines < 0 || $lines > $maxLines) fail('成绩超出允许范围');
+
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $insert = $pdo->prepare('INSERT INTO score_submissions (user_id, score, lines_cleared) VALUES (?, ?, ?)');
+            $insert->execute([$user['id'], $score, $lines]);
+            $update = $pdo->prepare(
+                'UPDATE users SET best_score = GREATEST(best_score, ?), total_lines = total_lines + ?, games_played = games_played + 1 WHERE id = ?'
+            );
+            $update->execute([$score, $lines, $user['id']]);
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $error;
+        }
+        $statement = $pdo->prepare('SELECT id, username, best_score, total_lines, games_played FROM users WHERE id = ?');
+        $statement->execute([$user['id']]);
+        respond(['player' => player($statement->fetch(), (int) $user['id'])]);
+    }
+
+    fail('接口不存在', 404);
+} catch (Throwable $error) {
+    error_log('[ross-blocks-api] ' . $error->getMessage());
+    fail('服务器暂时不可用，请稍后重试', 500);
+}

@@ -1,11 +1,12 @@
 {
   "name": "ross-blocks-h5",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
+    "build:production": "npm run build && node scripts/prepare-production-tree.mjs",
     "build:baota": "npm run build && node scripts/prepare-baota-release.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "vue-tsc -b",

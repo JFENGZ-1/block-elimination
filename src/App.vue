@@ -16,7 +16,8 @@ const soundEnabled = ref(gameAudio.enabled)
 const toast = ref('')
 const accountMenuOpen = ref(false)
 const accountMenuRef = ref<HTMLElement | null>(null)
-const contentProtectionEnabled = !import.meta.env.DEV
+const debugModeEnabled = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MODE !== 'false'
+const contentProtectionEnabled = !debugModeEnabled
 let toastTimer = 0
 let touchStartX = 0
 let touchStartY = 0
@@ -340,7 +341,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="site-footer">
-      <span>ROSS BLOCKS / LEARNING BUILD 0.1</span>
+      <span>ROSS BLOCKS / PRODUCTION BUILD 0.2</span>
       <span>先看空间，再放方块。</span>
     </footer>
 

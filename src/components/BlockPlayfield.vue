@@ -31,6 +31,9 @@ const breakthrough = ref(false)
 let didDrag = false
 let clearTimer = 0
 let breakthroughTimer = 0
+let dragFrame = 0
+let pendingPointerX = 0
+let pendingPointerY = 0
 
 const draggingPiece = computed(() => {
   const index = drag.value?.index
@@ -95,13 +98,26 @@ function updateHover(clientX: number, clientY: number) {
 
 function onPointerMove(event: PointerEvent) {
   if (!drag.value) return
-  if (Math.abs(event.clientX - drag.value.startX) + Math.abs(event.clientY - drag.value.startY) > 4) didDrag = true
-  drag.value = { ...drag.value, x: event.clientX, y: event.clientY }
-  updateHover(event.clientX, event.clientY)
+  event.preventDefault()
+  pendingPointerX = event.clientX
+  pendingPointerY = event.clientY
+  if (!dragFrame) dragFrame = window.requestAnimationFrame(applyPointerMove)
 }
 
-function onPointerUp() {
+function applyPointerMove() {
+  dragFrame = 0
   if (!drag.value) return
+  if (Math.abs(pendingPointerX - drag.value.startX) + Math.abs(pendingPointerY - drag.value.startY) > 4) didDrag = true
+  drag.value = { ...drag.value, x: pendingPointerX, y: pendingPointerY }
+  updateHover(pendingPointerX, pendingPointerY)
+}
+
+function onPointerUp(event: PointerEvent) {
+  if (!drag.value) return
+  pendingPointerX = event.clientX
+  pendingPointerY = event.clientY
+  if (dragFrame) window.cancelAnimationFrame(dragFrame)
+  applyPointerMove()
   if (hoverCell.value?.valid) {
     if (commitPlacement(drag.value.index, hoverCell.value.row, hoverCell.value.column)) selectedIndex.value = null
   }
@@ -176,6 +192,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('pointercancel', onPointerUp)
+  window.cancelAnimationFrame(dragFrame)
   window.clearTimeout(clearTimer)
   window.clearTimeout(breakthroughTimer)
 })
@@ -361,5 +378,10 @@ onBeforeUnmount(() => {
   .candidate-slot { min-height: 86px; padding: 6px; }
   .candidate-slot .piece { --unit: min(19px, 5vw, 2.3vh); }
   .candidate-slot .long-piece-preview { --unit: min(15px, 4vw, 1.8vh); }
+}
+
+@media (any-pointer: coarse) {
+  .board-cell.occupied::before, .piece-cell::after { filter: none; }
+  .drag-piece { filter: none; }
 }
 </style>
