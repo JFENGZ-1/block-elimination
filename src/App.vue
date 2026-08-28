@@ -265,7 +265,7 @@ onBeforeUnmount(() => {
             </Transition>
             <i :class="{ live: snapshot.status === 'running' }" />
           </div>
-          <div class="board-area">
+          <div class="board-area" :class="{ 'is-idle': snapshot.status === 'idle' }">
             <BlockPlayfield :snapshot="snapshot" :game="game" />
             <Transition name="game-over" appear>
               <div
