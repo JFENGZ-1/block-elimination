@@ -241,6 +241,13 @@ onBeforeUnmount(() => {
             </Transition>
             <i :class="{ live: snapshot.status === 'running' }" />
           </div>
+          <div class="cabinet-footer ross-actions board-actions-bar" aria-label="棋盘操作">
+            <span>每用完 3 个方块自动刷新</span>
+            <div>
+              <button :disabled="!snapshot.canUndo" @click="undo"><b aria-hidden="true">↶</b> 撤回</button>
+              <button :disabled="snapshot.status === 'idle'" @click="restart"><b aria-hidden="true">↻</b> 重开</button>
+            </div>
+          </div>
           <div class="board-area" :class="{ 'is-idle': snapshot.status === 'idle' }">
             <BlockPlayfield :snapshot="snapshot" :game="game" />
             <Transition name="game-over" appear>
@@ -288,13 +295,6 @@ onBeforeUnmount(() => {
                 </template>
               </div>
             </Transition>
-          </div>
-          <div class="cabinet-footer ross-actions">
-            <span>每用完 3 个方块自动刷新</span>
-            <div>
-              <button :disabled="!snapshot.canUndo" @click="undo">↶ 撤回</button>
-              <button :disabled="snapshot.status === 'idle'" @click="restart">↻ 重开</button>
-            </div>
           </div>
         </div>
       </section>
