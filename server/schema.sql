@@ -45,3 +45,14 @@ CREATE TABLE IF NOT EXISTS active_game_saves (
     PRIMARY KEY (user_id),
     CONSTRAINT fk_game_saves_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS one_time_game_bonuses (
+    user_id BIGINT UNSIGNED NOT NULL,
+    start_score INT UNSIGNED NOT NULL,
+    claimed_game_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    claimed_at DATETIME NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id),
+    UNIQUE KEY uq_game_bonus_claim (claimed_game_id),
+    CONSTRAINT fk_game_bonuses_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

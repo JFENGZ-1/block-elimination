@@ -154,6 +154,16 @@ function leaderboard(?array $currentUser, int $limit): array
     return ['players' => $players, 'currentRank' => $currentRank];
 }
 
+function nextStartScore(int $userId): int
+{
+    $statement = db()->prepare(
+        'SELECT start_score FROM one_time_game_bonuses WHERE user_id = ? AND claimed_game_id IS NULL LIMIT 1'
+    );
+    $statement->execute([$userId]);
+    $score = $statement->fetchColumn();
+    return is_numeric($score) ? (int) $score : 0;
+}
+
 function validCounter(mixed $value, int $maximum = 1000000): bool
 {
     return is_int($value) && $value >= 0 && $value <= $maximum;
@@ -236,7 +246,11 @@ try {
         $userId = (int) db()->lastInsertId();
         $session = newSession($userId);
         $user = ['id' => $userId, 'username' => $username, 'best_score' => 0, 'total_lines' => 0, 'games_played' => 0];
-        respond(['session' => ['id' => (string) $userId, 'username' => $username], 'player' => player($user, $userId)] + $session, 201);
+        respond([
+            'session' => ['id' => (string) $userId, 'username' => $username],
+            'player' => player($user, $userId),
+            'startBonus' => nextStartScore($userId),
+        ] + $session, 201);
     }
 
     if ($method === 'POST' && $path === '/login') {
@@ -255,6 +269,7 @@ try {
         respond([
             'session' => ['id' => (string) $user['id'], 'username' => $user['username']],
             'player' => player($user, (int) $user['id']),
+            'startBonus' => nextStartScore((int) $user['id']),
         ] + $session);
     }
 
@@ -270,12 +285,46 @@ try {
         respond([
             'session' => ['id' => (string) $user['id'], 'username' => $user['username']],
             'player' => player($user, (int) $user['id']),
+            'startBonus' => nextStartScore((int) $user['id']),
         ]);
     }
 
     if ($method === 'GET' && $path === '/leaderboard') {
         $user = authenticatedUser(false);
         respond(leaderboard($user, (int) ($_GET['limit'] ?? 20)));
+    }
+
+    if ($method === 'POST' && $path === '/game-start') {
+        $user = authenticatedUser();
+        $gameId = strtolower(trim((string) (body()['gameId'] ?? '')));
+        if (!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/', $gameId)) {
+            fail('开局标识格式不正确');
+        }
+
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $statement = $pdo->prepare(
+                'SELECT start_score, claimed_game_id FROM one_time_game_bonuses WHERE user_id = ? FOR UPDATE'
+            );
+            $statement->execute([$user['id']]);
+            $bonus = $statement->fetch();
+            $initialScore = 0;
+            if ($bonus && $bonus['claimed_game_id'] === null) {
+                $claim = $pdo->prepare(
+                    'UPDATE one_time_game_bonuses SET claimed_game_id = ?, claimed_at = NOW() WHERE user_id = ? AND claimed_game_id IS NULL'
+                );
+                $claim->execute([$gameId, $user['id']]);
+                if ($claim->rowCount() === 1) $initialScore = (int) $bonus['start_score'];
+            } elseif ($bonus && hash_equals((string) $bonus['claimed_game_id'], $gameId)) {
+                $initialScore = (int) $bonus['start_score'];
+            }
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $error;
+        }
+        respond(['initialScore' => $initialScore, 'randomBoard' => $initialScore > 0]);
     }
 
     if ($method === 'GET' && $path === '/game-save') {

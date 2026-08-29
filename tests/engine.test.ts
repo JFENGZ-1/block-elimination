@@ -54,6 +54,20 @@ assert.ok(restored.board.every((row) => row.every((cell) => cell === 0)), '撤�
 
 console.log('RossGame engine tests passed')
 
+const bonusGame = new RossGame()
+bonusGame.start(13000, true)
+assert.equal(bonusGame.snapshot.score, 13000, '一次性开局奖励应成为本局初始分数')
+assert.equal(bonusGame.exportState()?.score, 13000, '开局奖励应写入可恢复存档')
+assert.ok(bonusGame.snapshot.board.some((row) => row.some(Boolean)), '一次性奖励局应生成随机棋盘')
+assert.ok(bonusGame.snapshot.candidates.some((piece) => piece && (() => {
+  for (let row = 0; row <= BOARD_SIZE - piece.height; row += 1) {
+    for (let column = 0; column <= BOARD_SIZE - piece.width; column += 1) {
+      if (bonusGame.canPlace(piece, row, column)) return true
+    }
+  }
+  return false
+})()), '随机棋盘必须至少保留一个合法落点')
+
 const clearingGame = new RossGame()
 clearingGame.start()
 const internals = clearingGame as unknown as {

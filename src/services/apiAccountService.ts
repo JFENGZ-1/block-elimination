@@ -4,11 +4,13 @@ import type { RossGameSave } from '@/game/RossGame'
 const API_BASE = (import.meta.env.VITE_API_BASE || '/api').replace(/\/$/, '')
 const TOKEN_KEY = 'ross-blocks:api-token:v1'
 const SESSION_KEY = 'ross-blocks:api-session:v1'
+const START_BONUS_KEY = 'ross-blocks:start-bonus:v1'
 
 interface AuthResponse {
   token?: string
   session: SessionUser
   player: PublicPlayer
+  startBonus: number
 }
 
 interface LeaderboardResponse {
@@ -23,6 +25,7 @@ function token() {
 function clearSession() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(START_BONUS_KEY)
 }
 
 async function request<T>(path: string, options: RequestInit = {}, authenticated = false): Promise<T> {
@@ -53,6 +56,7 @@ async function request<T>(path: string, options: RequestInit = {}, authenticated
 function saveAuth(result: AuthResponse) {
   if (result.token) localStorage.setItem(TOKEN_KEY, result.token)
   localStorage.setItem(SESSION_KEY, JSON.stringify(result.session))
+  localStorage.setItem(START_BONUS_KEY, String(Math.max(0, Math.floor(result.startBonus || 0))))
 }
 
 export const apiAccountService = {
@@ -66,6 +70,11 @@ export const apiAccountService = {
     } catch {
       return null
     }
+  },
+
+  getCachedStartBonus() {
+    const value = Number(localStorage.getItem(START_BONUS_KEY) || 0)
+    return Number.isSafeInteger(value) && value > 0 ? value : 0
   },
 
   async register(username: string, password: string) {
@@ -104,6 +113,14 @@ export const apiAccountService = {
     return request<{ player: PublicPlayer }>(
       '/scores',
       { method: 'POST', body: JSON.stringify({ score: Math.floor(score), lines: Math.floor(lines) }) },
+      true,
+    )
+  },
+
+  startGame(gameId: string) {
+    return request<{ initialScore: number; randomBoard: boolean }>(
+      '/game-start',
+      { method: 'POST', body: JSON.stringify({ gameId }) },
       true,
     )
   },

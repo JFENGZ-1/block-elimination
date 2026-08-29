@@ -9,6 +9,7 @@ export const useAccountStore = defineStore('account', () => {
   const player = ref<PublicPlayer | null>(null)
   const leaderboard = ref<PublicPlayer[]>([])
   const rank = ref<number | null>(null)
+  const nextStartScore = ref(apiAccountService.getCachedStartBonus())
   const loading = ref(true)
 
   async function refreshLeaderboard() {
@@ -21,6 +22,7 @@ export const useAccountStore = defineStore('account', () => {
     const result = await apiAccountService.register(username, password)
     session.value = result.session
     player.value = result.player
+    nextStartScore.value = result.startBonus
     try {
       await refreshLeaderboard()
     } catch {
@@ -32,6 +34,7 @@ export const useAccountStore = defineStore('account', () => {
     const result = await apiAccountService.login(username, password)
     session.value = result.session
     player.value = result.player
+    nextStartScore.value = result.startBonus
     try {
       await refreshLeaderboard()
     } catch {
@@ -48,6 +51,7 @@ export const useAccountStore = defineStore('account', () => {
       session.value = null
       player.value = null
       rank.value = null
+      nextStartScore.value = 0
       try {
         await refreshLeaderboard()
       } catch {
@@ -65,6 +69,13 @@ export const useAccountStore = defineStore('account', () => {
     } catch {
       // 成绩已成功保存，榜单稍后再次打开时会自动刷新。
     }
+  }
+
+  async function startGame(gameId: string) {
+    if (!session.value || nextStartScore.value <= 0) return { initialScore: 0, randomBoard: false }
+    const result = await apiAccountService.startGame(gameId)
+    nextStartScore.value = 0
+    return result
   }
 
   async function saveGame(save: RossGameSave) {
@@ -88,14 +99,17 @@ export const useAccountStore = defineStore('account', () => {
         const result = await apiAccountService.me()
         session.value = result.session
         player.value = result.player
+        nextStartScore.value = result.startBonus
       } else {
         session.value = null
+        nextStartScore.value = 0
       }
       await refreshLeaderboard()
     } catch {
       session.value = null
       player.value = null
       rank.value = null
+      nextStartScore.value = 0
       try {
         await refreshLeaderboard()
       } catch {
@@ -113,11 +127,13 @@ export const useAccountStore = defineStore('account', () => {
     leaderboard,
     player,
     rank,
+    nextStartScore,
     loading,
     register,
     login,
     logout,
     submitScore,
+    startGame,
     saveGame,
     loadGame,
     clearGame,

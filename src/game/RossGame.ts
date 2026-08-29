@@ -257,9 +257,9 @@ export class RossGame {
     return true
   }
 
-  start() {
-    this.board = emptyBoard()
-    this.scoreValue = 0
+  start(initialScore = 0, randomizeBoard = false) {
+    this.board = randomizeBoard ? this.createRandomOpeningBoard() : emptyBoard()
+    this.scoreValue = Number.isSafeInteger(initialScore) && initialScore >= 0 ? initialScore : 0
     this.linesValue = 0
     this.comboValue = 0
     this.history = null
@@ -268,6 +268,16 @@ export class RossGame {
     this.placementsInBatch = 0
     this.statusValue = 'running'
     this.candidates = this.createCandidateSet()
+    for (
+      let attempt = 0;
+      attempt < 20 && !this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)));
+      attempt += 1
+    ) {
+      this.candidates = this.createCandidateSet()
+    }
+    if (!this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))) {
+      this.candidates[0] = makePiece([[0, 0]], Math.floor(Math.random() * BLOCK_COLORS.length) + 1)
+    }
     this.updateSpaceWarning()
     this.emit()
   }
@@ -375,6 +385,30 @@ export class RossGame {
       const color = Math.floor(Math.random() * BLOCK_COLORS.length) + 1
       return makePiece(shape, color)
     })
+  }
+
+  private createRandomOpeningBoard() {
+    const board = emptyBoard()
+    const positions = Array.from({ length: BOARD_SIZE * BOARD_SIZE }, (_, index) => index)
+    for (let index = positions.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1))
+      ;[positions[index], positions[swapIndex]] = [positions[swapIndex], positions[index]]
+    }
+
+    const occupiedCount = 18 + Math.floor(Math.random() * 9)
+    for (const position of positions.slice(0, occupiedCount)) {
+      const row = Math.floor(position / BOARD_SIZE)
+      const column = position % BOARD_SIZE
+      board[row][column] = Math.floor(Math.random() * BLOCK_COLORS.length) + 1
+    }
+
+    for (let row = 0; row < BOARD_SIZE; row += 1) {
+      if (board[row].every(Boolean)) board[row][Math.floor(Math.random() * BOARD_SIZE)] = 0
+    }
+    for (let column = 0; column < BOARD_SIZE; column += 1) {
+      if (board.every((row) => Boolean(row[column]))) board[Math.floor(Math.random() * BOARD_SIZE)][column] = 0
+    }
+    return board
   }
 
   private checkGameOver() {

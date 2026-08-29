@@ -14,12 +14,14 @@ const authOpen = ref(false)
 const rankOpen = ref(false)
 const soundEnabled = ref(gameAudio.enabled)
 const toast = ref('')
+const startingGame = ref(false)
 const accountMenuOpen = ref(false)
 const accountMenuRef = ref<HTMLElement | null>(null)
 const debugModeEnabled = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MODE !== 'false'
 const contentProtectionEnabled = !debugModeEnabled
 const gameSaveKey = 'tuotuo.game.save.v2'
 const pendingCloudClearKey = 'tuotuo.game.cloud-clear.v1'
+const pendingGameStartKey = 'tuotuo.game.pending-start.v1'
 let toastTimer = 0
 let lastCloudCheckpoint = ''
 let cloudSaveCleared = false
@@ -76,7 +78,10 @@ function restoreSavedGame() {
   try {
     const rawSave = localStorage.getItem(gameSaveKey)
     if (!rawSave) return
-    if (game.restore(JSON.parse(rawSave))) showToast('已恢复上次未完成的对局')
+    if (game.restore(JSON.parse(rawSave))) {
+      clearPendingGameStart()
+      showToast('已恢复上次未完成的对局')
+    }
     else localStorage.removeItem(gameSaveKey)
   } catch {
     try {
@@ -89,6 +94,39 @@ function restoreSavedGame() {
 
 function saveWhenHidden() {
   if (document.visibilityState === 'hidden') persistGame()
+}
+
+function pendingGameStartStorageKey() {
+  return account.session ? `${pendingGameStartKey}:${account.session.id}` : ''
+}
+
+function createGameId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function pendingGameStartId() {
+  const key = pendingGameStartStorageKey()
+  if (!key) return createGameId()
+  const existing = localStorage.getItem(key)
+  if (existing) return existing
+  const gameId = createGameId()
+  localStorage.setItem(key, gameId)
+  return gameId
+}
+
+function clearPendingGameStart() {
+  const key = pendingGameStartStorageKey()
+  if (!key) return
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // 存储不可用时，服务器端开局标识仍会保证奖励不重复。
+  }
 }
 
 function pendingCloudClearUser() {
@@ -169,7 +207,10 @@ async function recoverOnlineGame() {
   }
   try {
     const save = await account.loadGame()
-    if (save && game.restore(save)) showToast('已从云端恢复上次未完成的对局')
+    if (save && game.restore(save)) {
+      clearPendingGameStart()
+      showToast('已从云端恢复上次未完成的对局')
+    }
   } catch {
     // 离线时继续使用本机存档，联网后再尝试云端同步。
   }
@@ -195,12 +236,30 @@ function restart() {
   if (snapshot.value.status === 'running' && snapshot.value.score > 0) {
     if (!window.confirm('要结束当前这局并重新开始吗？')) return
   }
-  startGame()
+  void startGame()
 }
 
-function startGame() {
+async function startGame() {
+  if (startingGame.value) return
   gameAudio.playUi()
-  game.start()
+  let initialScore = 0
+  let randomBoard = false
+  if (account.session && account.nextStartScore > 0) {
+    startingGame.value = true
+    try {
+      const result = await account.startGame(pendingGameStartId())
+      initialScore = result.initialScore
+      randomBoard = result.randomBoard
+    } catch {
+      showToast('一次性奖励需要联网领取，请稍后再试')
+      return
+    } finally {
+      startingGame.value = false
+    }
+  }
+  game.start(initialScore, randomBoard)
+  clearPendingGameStart()
+  if (initialScore > 0) showToast(`一次性奖励已领取：${initialScore.toLocaleString('zh-CN')} 分`)
 }
 
 function undo() {
@@ -406,7 +465,7 @@ onBeforeUnmount(() => {
             <span>本机实时保存 · 三块云存档</span>
             <div>
               <button :disabled="!snapshot.canUndo" @click="undo"><b aria-hidden="true">↶</b> 撤回</button>
-              <button :disabled="snapshot.status === 'idle'" @click="restart"><b aria-hidden="true">↻</b> 重开</button>
+              <button :disabled="snapshot.status === 'idle' || startingGame" @click="restart"><b aria-hidden="true">↻</b> 重开</button>
             </div>
           </div>
           <div class="board-area" :class="{ 'is-idle': snapshot.status === 'idle' }">
@@ -442,8 +501,8 @@ onBeforeUnmount(() => {
                         <b>{{ topScore.toLocaleString('zh-CN') }}</b>
                       </span>
                     </div>
-                    <button class="primary-button game-over-button" @click="startGame">
-                      <span>◆</span> 再来一局
+                    <button class="primary-button game-over-button" :disabled="startingGame" @click="startGame">
+                      <span>◆</span> {{ startingGame ? '领取中…' : '再来一局' }}
                     </button>
                     <small class="save-hint">{{ account.session ? '本局成绩已记录' : '登录后可保存成绩并参与排名' }}</small>
                   </div>
@@ -451,7 +510,9 @@ onBeforeUnmount(() => {
                 <template v-else>
                   <p>READY WHEN YOU ARE</p>
                   <h1>坨坨方块</h1>
-                  <button class="primary-button" @click="startGame"><span>◆</span> 开始游戏</button>
+                  <button class="primary-button" :disabled="startingGame" @click="startGame">
+                    <span>◆</span> {{ startingGame ? '领取中…' : '开始游戏' }}
+                  </button>
                   <small>拖、放、填满、消除</small>
                 </template>
               </div>
