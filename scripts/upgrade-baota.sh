@@ -23,6 +23,22 @@ mkdir -p "${site_root}"
 cp -a "${source_root}/." "${site_root}/"
 
 if [[ -f "${site_root}/api/config.php" ]]; then
+  php_bin="$(command -v php 2>/dev/null || true)"
+  if [[ -z "${php_bin}" ]]; then
+    for candidate in /www/server/php/*/bin/php; do
+      [[ -x "${candidate}" ]] && php_bin="${candidate}"
+    done
+  fi
+  if [[ -z "${php_bin}" ]]; then
+    echo "升级失败：未找到 PHP CLI，无法更新数据库表。" >&2
+    exit 1
+  fi
+  "${php_bin}" "${repo_root}/scripts/migrate-database.php" "${site_root}/api/config.php" "${site_root}/api/schema.sql"
+else
+  echo "数据库尚未配置，首次安装时将由 setup.php 自动建表。"
+fi
+
+if [[ -f "${site_root}/api/config.php" ]]; then
   chown root:www "${site_root}/api/config.php" 2>/dev/null || true
   chmod 640 "${site_root}/api/config.php"
 fi

@@ -55,7 +55,7 @@ function db(): PDO
 function body(): array
 {
     $length = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
-    if ($length > 16384) fail('请求内容过大', 413);
+    if ($length > 32768) fail('请求内容过大', 413);
     $raw = file_get_contents('php://input');
     if ($raw === false || $raw === '') return [];
     $decoded = json_decode($raw, true);
@@ -154,6 +154,65 @@ function leaderboard(?array $currentUser, int $limit): array
     return ['players' => $players, 'currentRank' => $currentRank];
 }
 
+function validCounter(mixed $value, int $maximum = 1000000): bool
+{
+    return is_int($value) && $value >= 0 && $value <= $maximum;
+}
+
+function validBoard(mixed $board): bool
+{
+    if (!is_array($board) || count($board) !== 10) return false;
+    foreach ($board as $row) {
+        if (!is_array($row) || count($row) !== 10) return false;
+        foreach ($row as $cell) {
+            if (!is_int($cell) || $cell < 0 || $cell > 7) return false;
+        }
+    }
+    return true;
+}
+
+function validCandidates(mixed $candidates): bool
+{
+    if (!is_array($candidates) || count($candidates) !== 3) return false;
+    foreach ($candidates as $piece) {
+        if ($piece === null) continue;
+        if (!is_array($piece) || !is_string($piece['id'] ?? null) || strlen($piece['id']) > 100) return false;
+        if (!validCounter($piece['color'] ?? null, 7) || ($piece['color'] ?? 0) < 1) return false;
+        if (!validCounter($piece['width'] ?? null, 10) || ($piece['width'] ?? 0) < 1) return false;
+        if (!validCounter($piece['height'] ?? null, 10) || ($piece['height'] ?? 0) < 1) return false;
+        if (!is_array($piece['cells'] ?? null) || count($piece['cells']) < 1 || count($piece['cells']) > 100) return false;
+    }
+    return true;
+}
+
+function validateGameSave(mixed $save): array
+{
+    if (!is_array($save) || ($save['version'] ?? null) !== 1 || ($save['status'] ?? null) !== 'running') {
+        fail('对局存档格式不正确');
+    }
+    if (!validBoard($save['board'] ?? null) || !validCandidates($save['candidates'] ?? null)) {
+        fail('对局棋盘格式不正确');
+    }
+    foreach (['savedAt', 'score', 'lines', 'combo', 'placementsInBatch'] as $field) {
+        if (!validCounter($save[$field] ?? null, $field === 'savedAt' ? PHP_INT_MAX : 1000000)) {
+            fail('对局进度格式不正确');
+        }
+    }
+    if (($save['placementsInBatch'] ?? 4) > 3) fail('对局进度格式不正确');
+    $history = $save['history'] ?? null;
+    if ($history !== null) {
+        if (!is_array($history) || !validBoard($history['board'] ?? null) || !validCandidates($history['candidates'] ?? null)) {
+            fail('撤回存档格式不正确');
+        }
+        foreach (['score', 'lines', 'combo', 'placementsInBatch'] as $field) {
+            if (!validCounter($history[$field] ?? null) || ($field === 'placementsInBatch' && $history[$field] > 3)) {
+                fail('撤回存档格式不正确');
+            }
+        }
+    }
+    return $save;
+}
+
 try {
     $method = $_SERVER['REQUEST_METHOD'];
     $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
@@ -217,6 +276,41 @@ try {
     if ($method === 'GET' && $path === '/leaderboard') {
         $user = authenticatedUser(false);
         respond(leaderboard($user, (int) ($_GET['limit'] ?? 20)));
+    }
+
+    if ($method === 'GET' && $path === '/game-save') {
+        $user = authenticatedUser();
+        $statement = db()->prepare('SELECT state_json FROM active_game_saves WHERE user_id = ? LIMIT 1');
+        $statement->execute([$user['id']]);
+        $json = $statement->fetchColumn();
+        if (!is_string($json)) respond(['save' => null]);
+        $save = json_decode($json, true);
+        if (!is_array($save)) {
+            $delete = db()->prepare('DELETE FROM active_game_saves WHERE user_id = ?');
+            $delete->execute([$user['id']]);
+            respond(['save' => null]);
+        }
+        respond(['save' => $save]);
+    }
+
+    if ($method === 'PUT' && $path === '/game-save') {
+        $user = authenticatedUser();
+        $save = validateGameSave(body()['save'] ?? null);
+        $json = json_encode($save, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($json) || strlen($json) > 30000) fail('对局存档过大', 413);
+        $statement = db()->prepare(
+            'INSERT INTO active_game_saves (user_id, state_json) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = CURRENT_TIMESTAMP'
+        );
+        $statement->execute([$user['id'], $json]);
+        respond(['ok' => true]);
+    }
+
+    if ($method === 'DELETE' && $path === '/game-save') {
+        $user = authenticatedUser();
+        $statement = db()->prepare('DELETE FROM active_game_saves WHERE user_id = ?');
+        $statement->execute([$user['id']]);
+        respond(['ok' => true]);
     }
 
     if ($method === 'POST' && $path === '/scores') {

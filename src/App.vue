@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AuthModal from '@/components/AuthModal.vue'
 import BlockPlayfield from '@/components/BlockPlayfield.vue'
 import RankingModal from '@/components/RankingModal.vue'
@@ -18,12 +18,31 @@ const accountMenuOpen = ref(false)
 const accountMenuRef = ref<HTMLElement | null>(null)
 const debugModeEnabled = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MODE !== 'false'
 const contentProtectionEnabled = !debugModeEnabled
+const gameSaveKey = 'tuotuo.game.save.v2'
+const pendingCloudClearKey = 'tuotuo.game.cloud-clear.v1'
 let toastTimer = 0
+let lastCloudCheckpoint = ''
+let cloudSaveCleared = false
+let recoveredCloudForUser: string | null = null
+let appMounted = false
 
 const currentPlayer = computed(() => account.player)
 const topScore = computed(() => currentPlayer.value?.bestScore || 0)
 
-game.onChange = (next) => (snapshot.value = next)
+game.onChange = (next) => {
+  snapshot.value = next
+  persistGame()
+  if (next.status === 'running') {
+    cloudSaveCleared = false
+    cancelPendingCloudClear()
+    void syncOnlineCheckpoint()
+  } else if (next.status === 'over' && !cloudSaveCleared) {
+    cloudSaveCleared = true
+    lastCloudCheckpoint = ''
+    markPendingCloudClear()
+    void clearOnlineGame()
+  }
+}
 game.onGameOver = async (result) => {
   gameAudio.playGameOver()
   if (account.session) {
@@ -42,6 +61,135 @@ function showToast(message: string) {
   window.clearTimeout(toastTimer)
   toastTimer = window.setTimeout(() => (toast.value = ''), 2600)
 }
+
+function persistGame() {
+  try {
+    const save = game.exportState()
+    if (save) localStorage.setItem(gameSaveKey, JSON.stringify(save))
+    else localStorage.removeItem(gameSaveKey)
+  } catch {
+    // Safari 隐私模式或存储空间不足时不阻断游戏。
+  }
+}
+
+function restoreSavedGame() {
+  try {
+    const rawSave = localStorage.getItem(gameSaveKey)
+    if (!rawSave) return
+    if (game.restore(JSON.parse(rawSave))) showToast('已恢复上次未完成的对局')
+    else localStorage.removeItem(gameSaveKey)
+  } catch {
+    try {
+      localStorage.removeItem(gameSaveKey)
+    } catch {
+      // 本地存储完全不可用时保持初始界面。
+    }
+  }
+}
+
+function saveWhenHidden() {
+  if (document.visibilityState === 'hidden') persistGame()
+}
+
+function pendingCloudClearUser() {
+  try {
+    return localStorage.getItem(pendingCloudClearKey)
+  } catch {
+    return null
+  }
+}
+
+function markPendingCloudClear() {
+  const userId = account.session?.id
+  if (!userId) return
+  try {
+    localStorage.setItem(pendingCloudClearKey, userId)
+  } catch {
+    // 本地标记失败时仍尝试立即删除服务器存档。
+  }
+}
+
+function cancelPendingCloudClear() {
+  const userId = account.session?.id
+  if (!userId || pendingCloudClearUser() !== userId) return
+  try {
+    localStorage.removeItem(pendingCloudClearKey)
+  } catch {
+    // 存储不可用时不阻断新对局。
+  }
+}
+
+async function clearOnlineGame() {
+  const userId = account.session?.id
+  if (!userId) return false
+  try {
+    await account.clearGame()
+    if (pendingCloudClearUser() === userId) localStorage.removeItem(pendingCloudClearKey)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function cloudCheckpointId(save: NonNullable<ReturnType<RossGame['exportState']>>) {
+  return [
+    account.session?.id || 'guest',
+    save.placementsInBatch,
+    save.score,
+    ...save.candidates.map((piece) => piece?.id || '-'),
+  ].join(':')
+}
+
+async function syncOnlineCheckpoint(force = false) {
+  const save = game.exportState()
+  if (!account.session || !save) return
+  const isFreshCandidateSet = save.placementsInBatch === 0 && save.candidates.every(Boolean)
+  if (!force && !isFreshCandidateSet) return
+
+  const checkpointId = cloudCheckpointId(save)
+  if (checkpointId === lastCloudCheckpoint) return
+  lastCloudCheckpoint = checkpointId
+  try {
+    await account.saveGame(save)
+  } catch {
+    if (lastCloudCheckpoint === checkpointId) lastCloudCheckpoint = ''
+  }
+}
+
+async function recoverOnlineGame() {
+  const userId = account.session?.id
+  if (!userId || account.loading) return
+  if (pendingCloudClearUser() === userId) {
+    await clearOnlineGame()
+    return
+  }
+  if (snapshot.value.status === 'running') {
+    await syncOnlineCheckpoint(true)
+    return
+  }
+  try {
+    const save = await account.loadGame()
+    if (save && game.restore(save)) showToast('已从云端恢复上次未完成的对局')
+  } catch {
+    // 离线时继续使用本机存档，联网后再尝试云端同步。
+  }
+}
+
+function handleOnline() {
+  recoveredCloudForUser = null
+  if (snapshot.value.status === 'running') void syncOnlineCheckpoint(true)
+  else void recoverOnlineGame()
+}
+
+watch(
+  [() => account.loading, () => account.session?.id],
+  ([loading, userId]) => {
+    if (!appMounted || loading || !userId || recoveredCloudForUser === userId) return
+    recoveredCloudForUser = userId
+    void recoverOnlineGame()
+  },
+  { immediate: true },
+)
 
 function restart() {
   if (snapshot.value.status === 'running' && snapshot.value.score > 0) {
@@ -112,11 +260,24 @@ function preventGesture(event: Event) {
 onMounted(() => {
   document.addEventListener('pointerdown', closeAccountMenu)
   document.addEventListener('gesturestart', preventGesture)
+  document.addEventListener('visibilitychange', saveWhenHidden)
+  window.addEventListener('pagehide', persistGame)
+  window.addEventListener('online', handleOnline)
+  restoreSavedGame()
+  appMounted = true
+  const userId = account.session?.id
+  if (!account.loading && userId && recoveredCloudForUser !== userId) {
+    recoveredCloudForUser = userId
+    void recoverOnlineGame()
+  }
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', closeAccountMenu)
   document.removeEventListener('gesturestart', preventGesture)
+  document.removeEventListener('visibilitychange', saveWhenHidden)
+  window.removeEventListener('pagehide', persistGame)
+  window.removeEventListener('online', handleOnline)
 })
 </script>
 
@@ -242,7 +403,7 @@ onBeforeUnmount(() => {
             <i :class="{ live: snapshot.status === 'running' }" />
           </div>
           <div class="cabinet-footer ross-actions board-actions-bar" aria-label="棋盘操作">
-            <span>每用完 3 个方块自动刷新</span>
+            <span>本机实时保存 · 三块云存档</span>
             <div>
               <button :disabled="!snapshot.canUndo" @click="undo"><b aria-hidden="true">↶</b> 撤回</button>
               <button :disabled="snapshot.status === 'idle'" @click="restart"><b aria-hidden="true">↻</b> 重开</button>
@@ -316,7 +477,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="site-footer">
-      <span>TUOTUO BLOCKS / PRODUCTION BUILD 0.2.3</span>
+      <span>TUOTUO BLOCKS / PRODUCTION BUILD 0.2.4</span>
       <span>先看空间，再放方块。</span>
     </footer>
 

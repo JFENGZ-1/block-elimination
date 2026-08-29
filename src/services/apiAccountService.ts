@@ -1,4 +1,5 @@
 import type { PublicPlayer, SessionUser } from '@/types/account'
+import type { RossGameSave } from '@/game/RossGame'
 
 const API_BASE = (import.meta.env.VITE_API_BASE || '/api').replace(/\/$/, '')
 const TOKEN_KEY = 'ross-blocks:api-token:v1'
@@ -105,6 +106,22 @@ export const apiAccountService = {
       { method: 'POST', body: JSON.stringify({ score: Math.floor(score), lines: Math.floor(lines) }) },
       true,
     )
+  },
+
+  saveGame(save: RossGameSave) {
+    return request<{ ok: true }>(
+      '/game-save',
+      { method: 'PUT', body: JSON.stringify({ save }) },
+      true,
+    )
+  },
+
+  loadGame() {
+    return request<{ save: RossGameSave | null }>('/game-save', {}, true)
+  },
+
+  clearGame() {
+    return request<{ ok: true }>('/game-save', { method: 'DELETE' }, true)
   },
 
   getLeaderboard(limit = 20) {

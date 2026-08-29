@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { apiAccountService } from '@/services/apiAccountService'
 import type { PublicPlayer, SessionUser } from '@/types/account'
+import type { RossGameSave } from '@/game/RossGame'
 
 export const useAccountStore = defineStore('account', () => {
   const session = ref<SessionUser | null>(apiAccountService.getCachedSession())
@@ -66,6 +67,21 @@ export const useAccountStore = defineStore('account', () => {
     }
   }
 
+  async function saveGame(save: RossGameSave) {
+    if (!session.value) return
+    await apiAccountService.saveGame(save)
+  }
+
+  async function loadGame() {
+    if (!session.value) return null
+    return (await apiAccountService.loadGame()).save
+  }
+
+  async function clearGame() {
+    if (!session.value) return
+    await apiAccountService.clearGame()
+  }
+
   async function initialize() {
     try {
       if (apiAccountService.hasToken()) {
@@ -92,5 +108,19 @@ export const useAccountStore = defineStore('account', () => {
 
   void initialize()
 
-  return { session, leaderboard, player, rank, loading, register, login, logout, submitScore, refreshLeaderboard }
+  return {
+    session,
+    leaderboard,
+    player,
+    rank,
+    loading,
+    register,
+    login,
+    logout,
+    submitScore,
+    saveGame,
+    loadGame,
+    clearGame,
+    refreshLeaderboard,
+  }
 })

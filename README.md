@@ -10,6 +10,8 @@
 - Web Audio 落子、消除、连击与游戏结束音效，可一键静音
 - 单步撤回、重新开始、触屏与鼠标操作
 - PHP + MySQL 全服注册登录、会话保持、个人最高分和全服排行榜
+- 浏览器刷新/意外退出本机续局，登录用户每轮三块刷新点同步云存档
+- 游戏页面与静态资源离线缓存，弱网恢复后自动补传云端进度
 - 桌面端与移动端响应式界面
 - 独立 TypeScript 游戏规则引擎
 - 宝塔 Nginx 一次性可视化安装页面
@@ -68,7 +70,7 @@ npm run test:engine
 bash -lc 'set -e; ROSS_REPO=/www/server/block-elimination; [ -d "$ROSS_REPO/.git" ] || git clone https://github.com/JFENGZ-1/block-elimination.git "$ROSS_REPO"; git -C "$ROSS_REPO" pull --ff-only origin main; bash "$ROSS_REPO/scripts/upgrade-baota.sh" /www/wwwroot/demo.zjzoo.me'
 ```
 
-脚本会将已经关闭调试模式的 `deploy/wwwroot` 覆盖到 `/www/wwwroot/demo.zjzoo.me`，并保留服务器现有的 `api/config.php` 数据库配置。若站点目录不同，可将目录作为参数传入脚本。
+脚本会将已经关闭调试模式的 `deploy/wwwroot` 覆盖到 `/www/wwwroot/demo.zjzoo.me`，保留服务器现有的 `api/config.php` 数据库配置，并自动执行兼容 MySQL 5.7 的增量建表。若站点目录不同，可将目录作为参数传入脚本。
 
 ## 迁移到微信小游戏
 

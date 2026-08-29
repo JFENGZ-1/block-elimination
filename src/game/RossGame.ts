@@ -44,7 +44,19 @@ interface HistoryState {
   lines: number
   combo: number
   placementsInBatch: number
-  warning: SpaceWarning | null
+}
+
+export interface RossGameSave {
+  version: 1
+  savedAt: number
+  status: 'running'
+  board: number[][]
+  candidates: Array<BlockPiece | null>
+  score: number
+  lines: number
+  combo: number
+  placementsInBatch: number
+  history: HistoryState | null
 }
 
 export const BLOCK_COLORS = [
@@ -99,6 +111,71 @@ function makePiece(cells: Point[], color: number): BlockPiece {
   }
 }
 
+function isSafeCounter(value: unknown) {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+}
+
+function isBoard(value: unknown): value is number[][] {
+  return Array.isArray(value) && value.length === BOARD_SIZE && value.every((row) =>
+    Array.isArray(row) && row.length === BOARD_SIZE && row.every((cell) =>
+      Number.isInteger(cell) && cell >= 0 && cell <= BLOCK_COLORS.length,
+    ),
+  )
+}
+
+function isPiece(value: unknown): value is BlockPiece {
+  if (!value || typeof value !== 'object') return false
+  const piece = value as Partial<BlockPiece>
+  if (
+    typeof piece.id !== 'string' || piece.id.length > 100 ||
+    !Number.isInteger(piece.color) || Number(piece.color) < 1 || Number(piece.color) > BLOCK_COLORS.length ||
+    !Number.isInteger(piece.width) || Number(piece.width) < 1 || Number(piece.width) > BOARD_SIZE ||
+    !Number.isInteger(piece.height) || Number(piece.height) < 1 || Number(piece.height) > BOARD_SIZE ||
+    !Array.isArray(piece.cells) || piece.cells.length < 1 || piece.cells.length > BOARD_SIZE * BOARD_SIZE
+  ) return false
+
+  const cells = piece.cells as unknown[]
+  if (!cells.every((cell) =>
+    Array.isArray(cell) && cell.length === 2 &&
+    Number.isInteger(cell[0]) && cell[0] >= 0 && cell[0] < Number(piece.width) &&
+    Number.isInteger(cell[1]) && cell[1] >= 0 && cell[1] < Number(piece.height),
+  )) return false
+
+  const uniqueCells = new Set(cells.map((cell) => `${(cell as number[])[0]}-${(cell as number[])[1]}`))
+  return uniqueCells.size === cells.length
+}
+
+function isCandidateSet(value: unknown): value is Array<BlockPiece | null> {
+  return Array.isArray(value) && value.length === 3 && value.every((piece) => piece === null || isPiece(piece))
+}
+
+function isHistory(value: unknown): value is HistoryState {
+  if (!value || typeof value !== 'object') return false
+  const history = value as Partial<HistoryState>
+  return isBoard(history.board) && isCandidateSet(history.candidates) &&
+    isSafeCounter(history.score) && isSafeCounter(history.lines) && isSafeCounter(history.combo) &&
+    isSafeCounter(history.placementsInBatch) && Number(history.placementsInBatch) <= 3
+}
+
+function isRossGameSave(value: unknown): value is RossGameSave {
+  if (!value || typeof value !== 'object') return false
+  const save = value as Partial<RossGameSave>
+  return save.version === 1 && save.status === 'running' && isSafeCounter(save.savedAt) &&
+    isBoard(save.board) && isCandidateSet(save.candidates) && save.candidates.some(Boolean) &&
+    isSafeCounter(save.score) && isSafeCounter(save.lines) && isSafeCounter(save.combo) &&
+    isSafeCounter(save.placementsInBatch) && Number(save.placementsInBatch) <= 3 &&
+    (save.history === null || isHistory(save.history))
+}
+
+function canFitOnBoard(piece: BlockPiece, board: number[][]) {
+  for (let row = 0; row <= BOARD_SIZE - piece.height; row += 1) {
+    for (let column = 0; column <= BOARD_SIZE - piece.width; column += 1) {
+      if (piece.cells.every(([x, y]) => board[row + y][column + x] === 0)) return true
+    }
+  }
+  return false
+}
+
 export class RossGame {
   private board = emptyBoard()
   private candidates: Array<BlockPiece | null> = []
@@ -129,6 +206,55 @@ export class RossGame {
         : null,
       warning: this.warningValue ? { ...this.warningValue, blockedIndices: [...this.warningValue.blockedIndices] } : null,
     }
+  }
+
+  exportState(): RossGameSave | null {
+    if (this.statusValue !== 'running') return null
+    return {
+      version: 1,
+      savedAt: Date.now(),
+      status: 'running',
+      board: this.board.map((row) => [...row]),
+      candidates: this.candidates.map(clonePiece),
+      score: this.scoreValue,
+      lines: this.linesValue,
+      combo: this.comboValue,
+      placementsInBatch: this.placementsInBatch,
+      history: this.history
+        ? {
+            ...this.history,
+            board: this.history.board.map((row) => [...row]),
+            candidates: this.history.candidates.map(clonePiece),
+          }
+        : null,
+    }
+  }
+
+  restore(rawSave: unknown) {
+    if (!isRossGameSave(rawSave)) return false
+    if (!rawSave.candidates.some((piece) => Boolean(piece && canFitOnBoard(piece, rawSave.board)))) return false
+
+    this.board = rawSave.board.map((row) => [...row])
+    this.candidates = rawSave.candidates.map(clonePiece)
+    this.scoreValue = rawSave.score
+    this.linesValue = rawSave.lines
+    this.comboValue = rawSave.combo
+    this.placementsInBatch = rawSave.placementsInBatch
+    this.history = rawSave.history
+      ? {
+          ...rawSave.history,
+          board: rawSave.history.board.map((row) => [...row]),
+          candidates: rawSave.history.candidates.map(clonePiece),
+        }
+      : null
+    this.statusValue = 'running'
+    this.clearEventValue = null
+    this.warningValue = null
+    this.eventSequence = 0
+
+    this.updateSpaceWarning()
+    this.emit()
+    return true
   }
 
   start() {
@@ -172,9 +298,6 @@ export class RossGame {
       lines: this.linesValue,
       combo: this.comboValue,
       placementsInBatch: this.placementsInBatch,
-      warning: this.warningValue
-        ? { ...this.warningValue, blockedIndices: [...this.warningValue.blockedIndices] }
-        : null,
     }
 
     for (const [x, y] of piece.cells) this.board[row + y][column + x] = piece.color
@@ -240,11 +363,9 @@ export class RossGame {
     this.linesValue = this.history.lines
     this.comboValue = this.history.combo
     this.placementsInBatch = this.history.placementsInBatch
-    this.warningValue = this.history.warning
-      ? { ...this.history.warning, blockedIndices: [...this.history.warning.blockedIndices] }
-      : null
     this.history = null
     this.clearEventValue = null
+    this.updateSpaceWarning()
     this.emit()
   }
 

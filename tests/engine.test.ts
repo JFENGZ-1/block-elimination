@@ -33,6 +33,18 @@ assert.equal(placed.score, placement.piece.cells.length, '落子应按方块数�
 assert.equal(placed.canUndo, true)
 assert.equal(placed.candidates[placement.index], null, '已使用的备选方块应被消费')
 
+const activeSave = game.exportState()
+assert.ok(activeSave, '进行中的对局应可导出存档')
+const recoveredGame = new RossGame()
+assert.equal(recoveredGame.restore(activeSave), true, '合法存档应能恢复')
+assert.deepEqual(recoveredGame.snapshot.board, placed.board, '恢复后棋盘应一致')
+assert.deepEqual(recoveredGame.snapshot.candidates, placed.candidates, '恢复后候选方块应一致')
+assert.equal(recoveredGame.snapshot.score, placed.score, '恢复后分数应一致')
+assert.equal(recoveredGame.snapshot.canUndo, true, '恢复后仍应保留撤回能力')
+recoveredGame.undo()
+assert.equal(recoveredGame.snapshot.score, 0, '恢复后的对局仍可撤回到落子前')
+assert.equal(new RossGame().restore({ version: 1, status: 'running' }), false, '损坏存档必须拒绝恢复')
+
 game.undo()
 const restored = game.snapshot
 assert.equal(restored.score, 0, '撤回后分数应恢复')
