@@ -156,4 +156,52 @@ assert.equal(freshWarningGame.snapshot.warning?.stepsLeft, 1, '使用一个可�
 assert.equal(freshWarningGame.place(2, 1, 4), true)
 assert.equal(freshWarningGame.snapshot.status, 'over', '两步均未破局时应判定失败')
 
+const safeRefreshGame = new RossGame()
+let safeRefreshGameOverCount = 0
+safeRefreshGame.onGameOver = () => (safeRefreshGameOverCount += 1)
+safeRefreshGame.start()
+const safeRefreshState = safeRefreshGame as unknown as {
+  board: number[][]
+  candidates: Array<BlockPiece | null>
+  createCandidateSet: () => BlockPiece[]
+}
+safeRefreshState.board = Array.from({ length: BOARD_SIZE }, (_, row) =>
+  Array.from({ length: BOARD_SIZE }, (_, column) => ((row + column) % 2 === 0 ? 1 : 0)),
+)
+safeRefreshState.candidates = [
+  null,
+  null,
+  { id: 'last-playable-single', cells: [[0, 0]], color: 2, width: 1, height: 1 },
+]
+safeRefreshState.createCandidateSet = () => [
+  { id: 'blocked-horizontal-five', cells: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]], color: 3, width: 5, height: 1 },
+  { id: 'blocked-vertical-five', cells: [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]], color: 4, width: 1, height: 5 },
+  { id: 'blocked-square', cells: [[0, 0], [1, 0], [0, 1], [1, 1]], color: 5, width: 2, height: 2 },
+]
+assert.equal(safeRefreshGame.place(2, 1, 0), true)
+assert.equal(safeRefreshGame.snapshot.status, 'running', '刷新到三块都不可放时不能立即结束游戏')
+assert.equal(safeRefreshGameOverCount, 0, '安全刷新不能触发游戏结束回调')
+assert.ok(safeRefreshGame.snapshot.candidates.some((piece) => piece && (() => {
+  for (let row = 0; row <= BOARD_SIZE - piece.height; row += 1) {
+    for (let column = 0; column <= BOARD_SIZE - piece.width; column += 1) {
+      if (safeRefreshGame.canPlace(piece, row, column)) return true
+    }
+  }
+  return false
+})()), '每次刷新后至少应有一个方块可以立即放置')
+
+const unsafeFreshSave = safeRefreshGame.exportState()!
+unsafeFreshSave.candidates = safeRefreshState.createCandidateSet()
+const repairedRestoreGame = new RossGame()
+assert.equal(repairedRestoreGame.restore(unsafeFreshSave), true, '旧版本保存的新批次无解存档应能恢复')
+assert.equal(repairedRestoreGame.snapshot.status, 'running', '修复旧存档后应继续对局')
+assert.ok(repairedRestoreGame.snapshot.candidates.some((piece) => piece && (() => {
+  for (let row = 0; row <= BOARD_SIZE - piece.height; row += 1) {
+    for (let column = 0; column <= BOARD_SIZE - piece.width; column += 1) {
+      if (repairedRestoreGame.canPlace(piece, row, column)) return true
+    }
+  }
+  return false
+})()), '恢复旧的无解新批次时也必须补入可放方块')
+
 console.log('RossGame space warning tests passed')

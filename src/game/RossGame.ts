@@ -232,7 +232,9 @@ export class RossGame {
 
   restore(rawSave: unknown) {
     if (!isRossGameSave(rawSave)) return false
-    if (!rawSave.candidates.some((piece) => Boolean(piece && canFitOnBoard(piece, rawSave.board)))) return false
+    const hasPlayableCandidate = rawSave.candidates.some((piece) => Boolean(piece && canFitOnBoard(piece, rawSave.board)))
+    const isUnsafeFreshBatch = rawSave.placementsInBatch === 0 && rawSave.candidates.every(Boolean)
+    if (!hasPlayableCandidate && !isUnsafeFreshBatch) return false
 
     this.board = rawSave.board.map((row) => [...row])
     this.candidates = rawSave.candidates.map(clonePiece)
@@ -252,6 +254,9 @@ export class RossGame {
     this.warningValue = null
     this.eventSequence = 0
 
+    // 兼容旧版本可能保存下来的“刚刷新便三块全无解”状态。
+    if (!hasPlayableCandidate) this.candidates = this.createPlayableCandidateSet()
+
     this.updateSpaceWarning()
     this.emit()
     return true
@@ -267,17 +272,7 @@ export class RossGame {
     this.warningValue = null
     this.placementsInBatch = 0
     this.statusValue = 'running'
-    this.candidates = this.createCandidateSet()
-    for (
-      let attempt = 0;
-      attempt < 20 && !this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)));
-      attempt += 1
-    ) {
-      this.candidates = this.createCandidateSet()
-    }
-    if (!this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))) {
-      this.candidates[0] = makePiece([[0, 0]], Math.floor(Math.random() * BLOCK_COLORS.length) + 1)
-    }
+    this.candidates = this.createPlayableCandidateSet()
     this.updateSpaceWarning()
     this.emit()
   }
@@ -356,7 +351,7 @@ export class RossGame {
     }
 
     if (this.candidates.every((candidate) => candidate === null)) {
-      this.candidates = this.createCandidateSet()
+      this.candidates = this.createPlayableCandidateSet()
       this.placementsInBatch = 0
     }
     this.updateSpaceWarning()
@@ -387,6 +382,30 @@ export class RossGame {
     })
   }
 
+  private createPlayableCandidateSet() {
+    let candidates = this.createCandidateSet()
+    for (
+      let attempt = 0;
+      attempt < 20 && !candidates.some((piece) => this.canFitAnywhere(piece));
+      attempt += 1
+    ) {
+      candidates = this.createCandidateSet()
+    }
+
+    if (candidates.some((piece) => this.canFitAnywhere(piece))) return candidates
+
+    // 极端棋盘下不依赖继续碰运气：从标准形状库里挑一个当前确实可放的形状补入。
+    const playableShapes = SHAPES.filter((shape) =>
+      this.canFitAnywhere(makePiece(shape, 1)),
+    )
+    if (playableShapes.length > 0) {
+      const shape = playableShapes[Math.floor(Math.random() * playableShapes.length)]
+      const replacementIndex = Math.floor(Math.random() * candidates.length)
+      candidates[replacementIndex] = makePiece(shape, Math.floor(Math.random() * BLOCK_COLORS.length) + 1)
+    }
+    return candidates
+  }
+
   private createRandomOpeningBoard() {
     const board = emptyBoard()
     const positions = Array.from({ length: BOARD_SIZE * BOARD_SIZE }, (_, index) => index)
@@ -412,7 +431,14 @@ export class RossGame {
   }
 
   private checkGameOver() {
-    const playable = this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))
+    let playable = this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))
+    const isFreshBatch = this.placementsInBatch === 0 && this.candidates.every(Boolean)
+    // 防止未来的生成逻辑或旧存档绕过安全刷新后，在新批次出现时被误判结束。
+    if (!playable && isFreshBatch) {
+      this.candidates = this.createPlayableCandidateSet()
+      playable = this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))
+      this.updateSpaceWarning()
+    }
     if (!playable) {
       this.warningValue = null
       this.statusValue = 'over'
