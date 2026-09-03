@@ -136,7 +136,9 @@ const freshState = freshWarningGame as unknown as {
   createCandidateSet: () => BlockPiece[]
 }
 freshState.board = Array.from({ length: BOARD_SIZE }, (_, row) =>
-  Array.from({ length: BOARD_SIZE }, (_, column) => ((row + column) % 2 === 0 ? 1 : 0)),
+  row === 0
+    ? [1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    : Array.from({ length: BOARD_SIZE }, (_, column) => ((row + column) % 2 === 0 ? 1 : 0)),
 )
 freshState.candidates = [
   null,
@@ -203,5 +205,35 @@ assert.ok(repairedRestoreGame.snapshot.candidates.some((piece) => piece && (() =
   }
   return false
 })()), '恢复旧的无解新批次时也必须补入可放方块')
+
+const falseHopeRefreshGame = new RossGame()
+falseHopeRefreshGame.start()
+const falseHopeState = falseHopeRefreshGame as unknown as {
+  board: number[][]
+  candidates: Array<BlockPiece | null>
+  createCandidateSet: () => BlockPiece[]
+}
+falseHopeState.board = Array.from({ length: BOARD_SIZE }, (_, row) =>
+  Array.from({ length: BOARD_SIZE }, (_, column) => ((row + column) % 2 === 0 ? 1 : 0)),
+)
+falseHopeState.candidates = [
+  null,
+  null,
+  { id: 'last-before-false-hope', cells: [[0, 0]], color: 2, width: 1, height: 1 },
+]
+falseHopeState.createCandidateSet = () => [
+  { id: 'only-immediate-move', cells: [[0, 0]], color: 2, width: 1, height: 1 },
+  { id: 'unrescuable-horizontal-five', cells: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]], color: 3, width: 5, height: 1 },
+  { id: 'unrescuable-vertical-five', cells: [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]], color: 4, width: 1, height: 5 },
+]
+assert.equal(falseHopeRefreshGame.place(2, 1, 0), true)
+assert.equal(falseHopeRefreshGame.snapshot.status, 'running', '只有一步但不存在破局路径的新批次不能进入游戏')
+assert.ok(falseHopeRefreshGame.snapshot.candidates.every((piece) => piece?.cells.length === 1), '无完整解的新批次应替换为可完整走完的安全批次')
+
+const falseHopeSave = falseHopeRefreshGame.exportState()!
+falseHopeSave.candidates = falseHopeState.createCandidateSet()
+const repairedFalseHopeGame = new RossGame()
+assert.equal(repairedFalseHopeGame.restore(falseHopeSave), true, '旧版本保存的虚假破局机会应能恢复')
+assert.ok(repairedFalseHopeGame.snapshot.candidates.every((piece) => piece?.cells.length === 1), '恢复时应替换没有完整破局路径的新批次')
 
 console.log('RossGame space warning tests passed')

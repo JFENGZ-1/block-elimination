@@ -538,7 +538,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="site-footer">
-      <span>TUOTUO BLOCKS / PRODUCTION BUILD 0.2.7</span>
+      <span>TUOTUO BLOCKS / PRODUCTION BUILD 0.2.8</span>
       <span>先看空间，再放方块。</span>
     </footer>
 

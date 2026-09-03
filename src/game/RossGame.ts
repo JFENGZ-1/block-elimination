@@ -167,13 +167,85 @@ function isRossGameSave(value: unknown): value is RossGameSave {
     (save.history === null || isHistory(save.history))
 }
 
+function canPlaceOnBoard(piece: BlockPiece, row: number, column: number, board: number[][]) {
+  return piece.cells.every(([x, y]) => {
+    const targetRow = row + y
+    const targetColumn = column + x
+    return targetRow >= 0 && targetRow < BOARD_SIZE &&
+      targetColumn >= 0 && targetColumn < BOARD_SIZE &&
+      board[targetRow][targetColumn] === 0
+  })
+}
+
 function canFitOnBoard(piece: BlockPiece, board: number[][]) {
   for (let row = 0; row <= BOARD_SIZE - piece.height; row += 1) {
     for (let column = 0; column <= BOARD_SIZE - piece.width; column += 1) {
-      if (piece.cells.every(([x, y]) => board[row + y][column + x] === 0)) return true
+      if (canPlaceOnBoard(piece, row, column, board)) return true
     }
   }
   return false
+}
+
+function boardAfterPlacement(piece: BlockPiece, row: number, column: number, board: number[][]) {
+  const nextBoard = board.map((line) => [...line])
+  for (const [x, y] of piece.cells) nextBoard[row + y][column + x] = piece.color
+
+  const completedRows = Array.from({ length: BOARD_SIZE }, (_, index) => index).filter((index) =>
+    nextBoard[index].every(Boolean),
+  )
+  const completedColumns = Array.from({ length: BOARD_SIZE }, (_, columnIndex) => columnIndex).filter(
+    (columnIndex) => nextBoard.every((line) => Boolean(line[columnIndex])),
+  )
+  for (const rowIndex of completedRows) nextBoard[rowIndex].fill(0)
+  for (const columnIndex of completedColumns) {
+    for (let rowIndex = 0; rowIndex < BOARD_SIZE; rowIndex += 1) nextBoard[rowIndex][columnIndex] = 0
+  }
+  return nextBoard
+}
+
+function hasCompletionSequence(candidates: BlockPiece[], board: number[][]) {
+  let visitedStates = 0
+  const memo = new Map<string, boolean>()
+
+  function search(remaining: BlockPiece[], currentBoard: number[][]): boolean {
+    if (remaining.length === 0) return true
+    // 三块搜索通常几十步即可完成；上限用于保护低性能手机免受极端组合拖累。
+    if (++visitedStates > 20_000) return false
+
+    const pieceKey = remaining
+      .map((piece) => `${piece.width}x${piece.height}:${piece.cells.map(([x, y]) => `${x},${y}`).join(';')}`)
+      .sort()
+      .join('|')
+    const stateKey = `${currentBoard.map((line) => line.map((cell) => Number(Boolean(cell))).join('')).join('')}/${pieceKey}`
+    const cached = memo.get(stateKey)
+    if (cached !== undefined) return cached
+
+    const choices = remaining.map((piece, index) => {
+      const placements: Array<readonly [number, number]> = []
+      for (let row = 0; row <= BOARD_SIZE - piece.height; row += 1) {
+        for (let column = 0; column <= BOARD_SIZE - piece.width; column += 1) {
+          if (canPlaceOnBoard(piece, row, column, currentBoard)) placements.push([row, column])
+        }
+      }
+      return { index, piece, placements }
+    }).filter((choice) => choice.placements.length > 0)
+      .sort((left, right) => left.placements.length - right.placements.length)
+
+    for (const choice of choices) {
+      const nextRemaining = remaining.filter((_, index) => index !== choice.index)
+      for (const [row, column] of choice.placements) {
+        const nextBoard = boardAfterPlacement(choice.piece, row, column, currentBoard)
+        if (search(nextRemaining, nextBoard)) {
+          memo.set(stateKey, true)
+          return true
+        }
+      }
+    }
+    memo.set(stateKey, false)
+    return false
+  }
+
+  return search(candidates, board)
 }
 
 export class RossGame {
@@ -233,8 +305,9 @@ export class RossGame {
   restore(rawSave: unknown) {
     if (!isRossGameSave(rawSave)) return false
     const hasPlayableCandidate = rawSave.candidates.some((piece) => Boolean(piece && canFitOnBoard(piece, rawSave.board)))
-    const isUnsafeFreshBatch = rawSave.placementsInBatch === 0 && rawSave.candidates.every(Boolean)
-    if (!hasPlayableCandidate && !isUnsafeFreshBatch) return false
+    const isFreshBatch = rawSave.placementsInBatch === 0 && rawSave.candidates.every(Boolean)
+    const isUnsafeFreshBatch = isFreshBatch && !hasCompletionSequence(rawSave.candidates as BlockPiece[], rawSave.board)
+    if (!hasPlayableCandidate && !isFreshBatch) return false
 
     this.board = rawSave.board.map((row) => [...row])
     this.candidates = rawSave.candidates.map(clonePiece)
@@ -254,8 +327,8 @@ export class RossGame {
     this.warningValue = null
     this.eventSequence = 0
 
-    // 兼容旧版本可能保存下来的“刚刷新便三块全无解”状态。
-    if (!hasPlayableCandidate) this.candidates = this.createPlayableCandidateSet()
+    // 兼容旧版本可能保存下来的“有一步可走、但整组实际无法破局”状态。
+    if (isUnsafeFreshBatch) this.candidates = this.createPlayableCandidateSet()
 
     this.updateSpaceWarning()
     this.emit()
@@ -386,24 +459,18 @@ export class RossGame {
     let candidates = this.createCandidateSet()
     for (
       let attempt = 0;
-      attempt < 20 && !candidates.some((piece) => this.canFitAnywhere(piece));
+      attempt < 16 && !hasCompletionSequence(candidates, this.board);
       attempt += 1
     ) {
       candidates = this.createCandidateSet()
     }
 
-    if (candidates.some((piece) => this.canFitAnywhere(piece))) return candidates
+    if (hasCompletionSequence(candidates, this.board)) return candidates
 
-    // 极端棋盘下不依赖继续碰运气：从标准形状库里挑一个当前确实可放的形状补入。
-    const playableShapes = SHAPES.filter((shape) =>
-      this.canFitAnywhere(makePiece(shape, 1)),
+    // 极端棋盘下使用三个单格块兜底；稳定棋盘至少有 10 个空格，因此可保证完整走完。
+    return Array.from({ length: 3 }, () =>
+      makePiece([[0, 0]], Math.floor(Math.random() * BLOCK_COLORS.length) + 1),
     )
-    if (playableShapes.length > 0) {
-      const shape = playableShapes[Math.floor(Math.random() * playableShapes.length)]
-      const replacementIndex = Math.floor(Math.random() * candidates.length)
-      candidates[replacementIndex] = makePiece(shape, Math.floor(Math.random() * BLOCK_COLORS.length) + 1)
-    }
-    return candidates
   }
 
   private createRandomOpeningBoard() {
@@ -431,14 +498,13 @@ export class RossGame {
   }
 
   private checkGameOver() {
-    let playable = this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))
     const isFreshBatch = this.placementsInBatch === 0 && this.candidates.every(Boolean)
-    // 防止未来的生成逻辑或旧存档绕过安全刷新后，在新批次出现时被误判结束。
-    if (!playable && isFreshBatch) {
+    // 新批次不仅要“眼下有一块能放”，还必须存在把三块完整走完的顺序。
+    if (isFreshBatch && !hasCompletionSequence(this.candidates as BlockPiece[], this.board)) {
       this.candidates = this.createPlayableCandidateSet()
-      playable = this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))
       this.updateSpaceWarning()
     }
+    const playable = this.candidates.some((piece) => Boolean(piece && this.canFitAnywhere(piece)))
     if (!playable) {
       this.warningValue = null
       this.statusValue = 'over'
